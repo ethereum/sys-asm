@@ -63,10 +63,14 @@ contract WithdrawalsTest is Test {
   // request than can be read per block, the queue is eventually cleared and the
   // head and tails are reset to zero.
   function testQueueReset() public {
+    uint256 current_excess = 0;
     // Add more withdrawal requests than the max per block (16) so that the
     // queue is not immediately emptied.
     for (uint256 i = 0; i < max_per_block+1; i++) {
-      addRequest(address(uint160(i)), makeWithdrawal(i), 2);
+      if (i > 2) {
+        current_excess += 1;
+      }
+      addRequest(address(uint160(i)), makeWithdrawal(i), computeFee(current_excess));
     }
     assertStorage(count_slot, max_per_block+1, "unexpected request count");
 
@@ -76,8 +80,12 @@ contract WithdrawalsTest is Test {
 
     // Add another batch of max withdrawal requests per block (16) so the next
     // read leaves a single withdrawal request in the queue.
+    current_excess = 15;
     for (uint256 i = 17; i < 33; i++) {
-      addRequest(address(uint160(i)), makeWithdrawal(i), 2);
+      if ((i-17) > 2) {
+        current_excess +=1;
+      }
+      addRequest(address(uint160(i)), makeWithdrawal(i), computeFee(current_excess));
     }
     assertStorage(count_slot, max_per_block, "unexpected request count");
 
@@ -94,8 +102,12 @@ contract WithdrawalsTest is Test {
 
     // Add five (5) more requests to check that new requests can be added after the queue
     // is reset.
+    current_excess = 27;
     for (uint256 i = 33; i < 38; i++) {
-      addRequest(address(uint160(i)), makeWithdrawal(i), 4);
+      if (i-33 > 2) {
+        current_excess += 1;
+      }
+      addRequest(address(uint160(i)), makeWithdrawal(i), computeFee(current_excess));
     }
     assertStorage(count_slot, 5, "unexpected request count");
 
@@ -110,10 +122,14 @@ contract WithdrawalsTest is Test {
   function testFee() public {
     uint256 idx = 0;
     uint256 count = max_per_block*64;
+    uint256 current_excess = 0;
 
     // Add a bunch of requests.
     for (; idx < count; idx++) {
-      addRequest(address(uint160(idx)), makeWithdrawal(idx), 1);
+      if (idx > 2) {
+        current_excess += 1;
+      }
+      addRequest(address(uint160(idx)), makeWithdrawal(idx), computeFee(current_excess));
     }
     assertStorage(count_slot, count, "unexpected request count");
     checkWithdrawals(0, max_per_block);

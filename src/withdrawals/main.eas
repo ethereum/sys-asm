@@ -62,6 +62,26 @@
   push SLOT_EXCESS      ;; [excess_slot, update_fraction]
   sload                 ;; [excess, update_fraction]
 
+  push TARGET_PER_BLOCK ;; [target, excess, update_fraction]
+  push SLOT_COUNT       ;; [count_slot, target, excess, update_fraction]
+  sload                 ;; [count, target, excess, update_fraction]
+  swap1                 ;; [target, count, excess, update_fraction]
+  dup2                  ;; [count, target, count, excess, update_fraction]
+  gt                    ;; [count > target, count, excess, update_fraction]
+
+  jumpi @compute_current_excess
+  pop                   ;; [excess, update_fraction]
+  push 0                ;; [0, excess, update_fraction]
+  jump @compute_current_fee
+
+compute_current_excess:
+  push TARGET_PER_BLOCK ;; [target, count, excess, update_fraction]
+  swap1                 ;; [count, target, excess, update_fraction]
+  sub                   ;; [count - target, excess, update_fraction]
+
+compute_current_fee:
+  add                   ;; [current_excess+excess, update_fraction]
+
   ;; Check if the pre-fork inhibitor is still active, revert if so.
   dup1                  ;; [excess, excess, update_fraction]
   push EXCESS_INHIBITOR ;; [inhibitor, excess, excess, update_fraction]
