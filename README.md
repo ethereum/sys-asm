@@ -1,8 +1,8 @@
 # `sys-asm`
 
 This repository stores [`geas`][geas] implementations of Ethereum's system
-contracts, such as the ones associated with [EIP-7002][7002] and
-[EIP-7251][7251].
+contracts, such as the ones associated with [EIP-7002][7002], [EIP-7251][7251],
+and [EIP-8282][8282].
 
 ## Getting Started
 
@@ -96,6 +96,7 @@ to the network.
 [geas]: https://github.com/fjl/geas
 [7002]: https://eips.ethereum.org/EIPS/eip-7002
 [7251]: https://eips.ethereum.org/EIPS/eip-7251
+[8282]: https://eips.ethereum.org/EIPS/eip-8282
 [foundry]: https://getfoundry.sh/
 [forge]: https://github.com/foundry-rs/foundry/blob/master/forge
 [nm]: https://yamenmerhi.medium.com/nicks-method-ethereum-keyless-execution-168a6659479c
