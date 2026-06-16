@@ -4,8 +4,8 @@ pragma solidity ^0.8.13;
 import "geas-ffi/Geas.sol";
 import "./Test.sol";
 
-uint256 constant target_per_block = 2;
-uint256 constant max_per_block = 16;
+uint256 constant target_per_block = 32;
+uint256 constant max_per_block = 256;
 uint256 constant inhibitor = uint256(bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff));
 
 uint256 constant min_amount = 1000000000; // minimum deposit amount in gwei (1 ETH)
@@ -89,8 +89,8 @@ contract BuilderDepositTest is Test {
   // request than can be read per block, the queue is eventually cleared and the
   // head and tails are reset to zero.
   function testQueueReset() public {
-    // Add more deposit requests than the max per block (16) so that the queue is
-    // not immediately emptied.
+    // Add more deposit requests than the max per block so that the queue is not
+    // immediately emptied.
     for (uint256 i = 0; i < max_per_block+1; i++) {
       addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + 2);
     }
@@ -98,21 +98,22 @@ contract BuilderDepositTest is Test {
 
     // Simulate syscall, check that max deposit requests per block are read.
     checkDeposits(0, max_per_block);
-    assertExcess(15);
+    assertExcess(max_per_block + 1 - target_per_block);
 
-    // Add another batch of max deposit requests per block (16) so the next read
+    // Add another batch of max deposit requests per block so the next read
     // leaves a single deposit request in the queue.
-    for (uint256 i = 17; i < 33; i++) {
-      addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + 2);
+    uint256 fee = computeFee(load(excess_slot));
+    for (uint256 i = max_per_block+1; i < 2*max_per_block+1; i++) {
+      addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, max_per_block, "unexpected request count");
 
     // Simulate syscall. Verify first that max per block are read. Then
     // verify only the single final request is read.
-    checkDeposits(16, max_per_block);
-    assertExcess(29);
-    checkDeposits(32, 1);
-    assertExcess(27);
+    checkDeposits(max_per_block, max_per_block);
+    assertExcess(2*max_per_block - 2*target_per_block + 1);
+    checkDeposits(2*max_per_block, 1);
+    assertExcess(2*max_per_block - 3*target_per_block + 1);
 
     // Now ensure the queue is empty and has reset to zero.
     assertStorage(queue_head_slot, 0, "expected queue head reset");
@@ -120,21 +121,22 @@ contract BuilderDepositTest is Test {
 
     // Add five (5) more requests to check that new requests can be added after
     // the queue is reset.
-    for (uint256 i = 33; i < 38; i++) {
-      addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + 4);
+    fee = computeFee(load(excess_slot));
+    for (uint256 i = 2*max_per_block+1; i < 2*max_per_block+6; i++) {
+      addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, 5, "unexpected request count");
 
     // Simulate syscall, read only the max requests per block.
-    checkDeposits(33, 5);
-    assertExcess(30);
+    checkDeposits(2*max_per_block+1, 5);
+    assertExcess(2*max_per_block - 4*target_per_block + 6);
   }
 
   // testFee adds many requests, and verifies the fee decreases correctly until
   // it returns to 0. At every step the value must cover the stake plus the fee.
   function testFee() public {
     uint256 idx = 0;
-    uint256 count = max_per_block*64;
+    uint256 count = max_per_block + target_per_block;
 
     // Add a bunch of requests.
     for (; idx < count; idx++) {
@@ -148,8 +150,8 @@ contract BuilderDepositTest is Test {
 
     // Attempt to add a deposit request one wei short of the stake plus fee and a
     // deposit request with exactly stake plus fee. This should cause the excess
-    // requests counter to decrease by 1 each iteration.
-    for (uint256 i = 0; i < count; i++) {
+    // requests counter to decrease until it returns to 0.
+    while (excess != 0) {
       assertExcess(excess);
 
       uint256 value = min_amount * 1 gwei + computeFee(excess);
@@ -159,12 +161,15 @@ contract BuilderDepositTest is Test {
       uint256 expected = min(idx-read+1, max_per_block);
       checkDeposits(read, expected);
 
-      if (excess != 0) {
-        excess--;
+      if (excess + 1 > target_per_block) {
+        excess = excess + 1 - target_per_block;
+      } else {
+        excess = 0;
       }
       read += expected;
       idx++;
     }
+    assertExcess(0);
   }
 
   // testFeeGetterRejectsValue verifies the empty-calldata fee getter reverts
