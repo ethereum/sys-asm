@@ -5,22 +5,13 @@
 ;; ╚█████╔╝███████╗╚█████╔╝███████╗ ██║  ██║███████║██║ ╚═╝ ██║
 ;;  ╚════╝ ╚══════╝ ╚════╝ ╚══════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝
 ;;
-;; This is an implementation of the EIP-8282 builder deposit request contract.
-;; It is copied from the EIP-7002 withdrawals contract (the same code skeleton
-;; the EIP-7251 consolidations contract uses); the fee mechanism, the queue
-;; design, and the subroutines logic of the original smart contract remain.
+;; This is an implementation of EIP-8282's contract handling EL triggered
+;; builder deposits. It leverages the fee mechanism and the queue design of
+;; the original EIP-7002 smart contract implementation. Therefore, the
+;; subroutines logic of the original smart contract remains.
 ;;
-;; The differences from the EIP-7002 smart contract are:
-;;
-;;   * input data and the size of the queue item: the input is a 184-byte
-;;     deposit (pubkey ++ withdrawal_credentials ++ amount ++ signature, with
-;;     the amount a big-endian uint64 of gwei) and the record carries no
-;;     source address, so the record equals the input with the amount
-;;     converted to little-endian on the read path (the same conversion, and
-;;     the same macro, the EIP-7002 contract uses for its amount);
-;;   * two added checks on the write path: the amount must be at least
-;;     MIN_AMOUNT, and the call value must cover amount * 1 gwei of stake on
-;;     top of the request fee.
+;; The difference from the EIP-7002 smart contract is in input data, the size of
+;; the queue item, and the deposit amount and stake value checks.
 
 #pragma target "prague"
 
@@ -131,10 +122,7 @@ handle_input:
   gt                    ;; [min_amount > amount, amount, req_fee]
   jumpi @revert         ;; [amount, req_fee]
 
-  ;; Determine if the value provided beyond the fee covers the stake, i.e.
-  ;; callvalue - req_fee >= amount * 1 gwei. The subtraction cannot underflow
-  ;; (the fee check above passed) and the multiplication cannot overflow
-  ;; (amount < 2**64).
+  ;; Determine if the value provided beyond the fee covers the stake.
   push GWEI             ;; [gwei, amount, req_fee]
   mul                   ;; [amount_wei, req_fee]
   swap1                 ;; [req_fee, amount_wei]
@@ -213,8 +201,7 @@ handle_input:
   swap1                 ;; [slot, sig[72:96], ..]
   sstore                ;; [..]
 
-  ;; Assemble log data: the input verbatim (the amount big-endian, as
-  ;; submitted).
+  ;; Assemble log data.
   push INPUT_SIZE       ;; [size, ..]
   push 0                ;; [ost, size, ..]
   push 0                ;; [dest, ost, size, ..]
@@ -249,9 +236,6 @@ handle_input:
 ;;  | pubkey | withdrawal_credentials | amount | signature |
 ;;  +--------+------------------------+--------+-----------+
 ;;      48               32                8         96
-;;
-;; The amount is returned little-endian (the SSZ encoding the consensus layer
-;; decodes), converted from the big-endian value submitted on the write path.
 ;;
 ;; Because the requests are stored across SLOTS_PER_ITEM storage slots, there
 ;; is some shuffling to align the data.
@@ -305,10 +289,7 @@ accum_loop:
   push QUEUE_OFFSET     ;; [offset, 6*(i+head_idx), i, ..]
   add                   ;; [slotbase, i, ..]
 
-  ;; Write values to memory flat and contiguously. The record equals the six
-  ;; storage words written back to back, except that the amount (record bytes
-  ;; 80..88, stored big-endian in the middle of the third word) is re-stored
-  ;; little-endian.
+  ;; Write values to memory flat and contiguously.
   ;;
   ;; The slots have the following layout:
   ;;
@@ -369,8 +350,7 @@ accum_loop:
   add                   ;; [slot, offset, slotbase, ..]
   sload                 ;; [wc2_am_sg1, offset, slotbase, ..]
 
-  ;; Store wc2_am_sg1 at output offset = i*RECORD_SIZE + 64 (the amount still
-  ;; big-endian; it is overwritten little-endian just below).
+  ;; Store wc2_am_sg1 at output offset = i*RECORD_SIZE + 64.
   dup1                  ;; [wc2_am_sg1, wc2_am_sg1, offset, slotbase, ..]
   dup3                  ;; [offset, wc2_am_sg1, wc2_am_sg1, offset, slotbase, ..]
   mstore                ;; [wc2_am_sg1, offset, slotbase, ..]
@@ -415,9 +395,7 @@ accum_loop:
   push 32               ;; [32, offset, slotbase, ..]
   add                   ;; [offset=offset+160, slotbase, ..]
 
-  ;; Read slot 'sg4' from storage. The low 8 bytes are zero (see the write
-  ;; path), so the word can be stored as-is; the next record (or the return
-  ;; size) overwrites or cuts the trailing zero bytes.
+  ;; Read slot 'sg4' from storage.
   swap1                 ;; [slotbase, offset, ..]
   push 5                ;; [5, slotbase, offset, ..]
   add                   ;; [slot, offset, ..]

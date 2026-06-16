@@ -5,15 +5,13 @@
 ;; ╚█████╔╝███████╗╚█████╔╝███████╗ ██║  ██║███████║██║ ╚═╝ ██║
 ;;  ╚════╝ ╚══════╝ ╚════╝ ╚══════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝
 ;;
-;; This is an implementation of the EIP-8282 builder exit request contract. It
-;; is copied from the EIP-7002 withdrawals contract (the same code skeleton the
-;; EIP-7251 consolidations contract uses); the fee mechanism, the queue design,
-;; and the subroutines logic of the original smart contract remain.
+;; This is an implementation of EIP-8282's contract handling EL triggered
+;; builder exits. It leverages the fee mechanism and the queue design of the
+;; original EIP-7002 smart contract implementation. Therefore, the subroutines
+;; logic of the original smart contract remains.
 ;;
-;; The difference from the EIP-7002 smart contract is in input data and the
-;; size of the queue item: the input is a bare 48-byte builder public key, with
-;; no amount field, so the record is (address ++ pubkey) and the contract does
-;; no amount handling at all. The fee parameters are unchanged.
+;; The difference from the EIP-7002 smart contract is in input data and the size
+;; of the queue item.
 
 #pragma target "prague"
 
