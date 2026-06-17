@@ -447,7 +447,7 @@ revert:
   push 5*8              ;; [40, value, offset, value]
   shr                   ;; [value>>40, offset, value]
   dup2                  ;; [offset, value>>40, offset, value]
-  push 5                ;; [2, offset, value>>40, offset, value]
+  push 5                ;; [5, offset, value>>40, offset, value]
   add                   ;; [offset+5, value>>40, offset, value]
   mstore8               ;; [offset, value]
 

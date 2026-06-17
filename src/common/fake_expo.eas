@@ -1,4 +1,4 @@
-;; fake exponentiation 
+;; fake exponentiation
 ;; input stack = [factor, numerator, denominator]
 
 dup3        ;; [denom, factor, numer, denom]
@@ -45,7 +45,7 @@ swap1       ;; [output, denom, i, numer, accum]
 div         ;; [output / denom, i , numer, accum]
 
 ;; clean up stack
-swap3       ;; [accum, i, numer, result]
-pop         ;; [i, numer, result]
-pop         ;; [numer, result]
-pop         ;; [result]
+swap3       ;; [accum, i, numer, output/denom]
+pop         ;; [i, numer, output/denom]
+pop         ;; [numer, output/denom]
+pop         ;; [output/denom]
