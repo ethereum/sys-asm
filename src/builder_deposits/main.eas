@@ -220,30 +220,30 @@ handle_input:
 
     stop
 
-    ;; ----------------------------------------------------------------------------
-    ;; SYSTEM SUBROUTINE ----------------------------------------------------------
-    ;; ----------------------------------------------------------------------------
-    ;;
-    ;; Pop request from queue, update fee accumulator ~~ This is the logic executed
-    ;; by the protocol each block. It reads as many requests as available from the
-    ;; queue, until the max request per block is reached. The requests are returned
-    ;; as a contiguous array of bytes with each record being exactly RECORD_SIZE
-    ;; bytes.
-    ;;
-    ;;  Deposit request record:
-    ;;
-    ;;  +--------+------------------------+--------+-----------+
-    ;;  | pubkey | withdrawal_credentials | amount | signature |
-    ;;  +--------+------------------------+--------+-----------+
-    ;;      48               32                8         96
-    ;;
-    ;; Because the requests are stored across SLOTS_PER_ITEM storage slots, there
-    ;; is some shuffling to align the data.
-    ;;
-    ;; After reading the requests, they are removed from the queue by modifying the
-    ;; queue's head index. The excess requests accumulator is updated so that the
-    ;; new cost of submitting a request is reflected. Finally, the request count is
-    ;; reset.
+;;; ----------------------------------------------------------------------------
+;;; SYSTEM SUBROUTINE ----------------------------------------------------------
+;;; ----------------------------------------------------------------------------
+;;;
+;;; Pop request from queue, update fee accumulator ~~ This is the logic executed
+;;; by the protocol each block. It reads as many requests as available from the
+;;; queue, until the max request per block is reached. The requests are returned
+;;; as a contiguous array of bytes with each record being exactly RECORD_SIZE
+;;; bytes.
+;;;
+;;;  Deposit request record:
+;;;
+;;;  +--------+------------------------+--------+-----------+
+;;;  | pubkey | withdrawal_credentials | amount | signature |
+;;;  +--------+------------------------+--------+-----------+
+;;;      48               32                8         96
+;;;
+;;; Because the requests are stored across SLOTS_PER_ITEM storage slots, there
+;;; is some shuffling to align the data.
+;;;
+;;; After reading the requests, they are removed from the queue by modifying the
+;;; queue's head index. The excess requests accumulator is updated so that the
+;;; new cost of submitting a request is reflected. Finally, the request count is
+;;; reset.
 read_requests:
     ;; Determine the size of the queue by calculating tail - head.
     push QUEUE_TAIL        ; [tail_idx_slot]
