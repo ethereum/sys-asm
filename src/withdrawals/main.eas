@@ -315,7 +315,7 @@ accum_loop:
     ;; Store am at offset = i*RECORD_SIZE + 68.
     ;; Note we convert to little-endian.
     swap1                    ; [offset, am, ..]
-    %mstore_uint64_le        ; [i, ..]
+    %MSTORE64_le             ; [i, ..]
 
     ;; Increment i.
     push 1                   ; [1, i, ..]
@@ -427,63 +427,4 @@ revert:                      ; [...]
 ;;; This defines a mask for accessing the top 16 bytes of a number.
 #define pk2_mask = 0xffffffffffffffffffffffffffffffff00000000000000000000000000000000
 
-;;; Helper for storing little-endian amount.
-#define %mstore_uint64_le {  ; [offset, value]
-    dup2                     ; [value, offset, value]
-    push 7 * 8               ; [56, value, offset, value]
-    shr                      ; [value>>56, offset, value]
-    dup2                     ; [offset, value>>56, offset, value]
-    push 7                   ; [7, offset, value>>56, offset, value]
-    add                      ; [offset+7, value>>56, offset, value]
-    mstore8                  ; [offset, value]
-
-    dup2                     ; [value, offset, value]
-    push 6 * 8               ; [48, value, offset, value]
-    shr                      ; [value>>48, offset, value]
-    dup2                     ; [offset, value>>48, offset, value]
-    push 6                   ; [6, offset, value>>48, offset, value]
-    add                      ; [offset+6, value>>48, offset, value]
-    mstore8                  ; [offset, value]
-
-    dup2                     ; [value, offset, value]
-    push 5 * 8               ; [40, value, offset, value]
-    shr                      ; [value>>40, offset, value]
-    dup2                     ; [offset, value>>40, offset, value]
-    push 5                   ; [5, offset, value>>40, offset, value]
-    add                      ; [offset+5, value>>40, offset, value]
-    mstore8                  ; [offset, value]
-
-    dup2                     ; [value, offset, value]
-    push 4 * 8               ; [32, value, offset, value]
-    shr                      ; [value>>32, offset, value]
-    dup2                     ; [offset, value>>32, offset, value]
-    push 4                   ; [4, offset, value>>32, offset, value]
-    add                      ; [offset+4, value>>32, offset, value]
-    mstore8                  ; [offset, value]
-
-    dup2                     ; [value, offset, value]
-    push 3 * 8               ; [24, value, offset, value]
-    shr                      ; [value>>24, offset, value]
-    dup2                     ; [offset, value>>24, offset, value]
-    push 3                   ; [3, offset, value>>24, offset, value]
-    add                      ; [offset+3, value>>24, offset, value]
-    mstore8                  ; [offset, value]
-
-    dup2                     ; [value, offset, value]
-    push 2 * 8               ; [16, value, offset, value]
-    shr                      ; [value>>16, offset, value]
-    dup2                     ; [offset, value>>16, offset, value]
-    push 2                   ; [2, offset, value>>16, offset, value]
-    add                      ; [offset+2, value>>16, offset, value]
-    mstore8                  ; [offset, value]
-
-    dup2                     ; [value, offset, value]
-    push 1 * 8               ; [8, value, offset, value]
-    shr                      ; [value>>8, offset, value]
-    dup2                     ; [offset, value>>8, offset, value]
-    push 1                   ; [1, offset, value>>8, offset, value]
-    add                      ; [offset+1, value>>8, offset, value]
-    mstore8                  ; [offset, value]
-
-    mstore8                  ; []
-}
+#include "../common/mstore.eas"
