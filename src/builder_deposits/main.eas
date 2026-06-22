@@ -342,7 +342,7 @@ accum_loop:
     dup2                   ; [offset, pk2_wc1, offset, slotbase, ..]
     mstore                 ; [offset, slotbase, ..]
     push 32                ; [32, offset, slotbase, ..]
-    add                    ; [offset=offset+64, slotbase, ..]
+    add                    ; [offset=offset+32, slotbase, ..]
 
     ;; Read slot 'wc2_am_sg1' from storage.
     dup2                   ; [slotbase, offset, slotbase, ..]
@@ -369,7 +369,7 @@ accum_loop:
     %MSTORE64_le           ; [offset, slotbase, ..]
 
     push 32                ; [32, offset, slotbase, ..]
-    add                    ; [offset=offset+96, slotbase, ..]
+    add                    ; [offset=offset+32, slotbase, ..]
 
     ;; Read slot 'sg2' from storage.
     dup2                   ; [slotbase, offset, slotbase, ..]
@@ -381,7 +381,7 @@ accum_loop:
     dup2                   ; [offset, sg2, offset, slotbase, ..]
     mstore                 ; [offset, slotbase, ..]
     push 32                ; [32, offset, slotbase, ..]
-    add                    ; [offset=offset+128, slotbase, ..]
+    add                    ; [offset=offset+32, slotbase, ..]
 
     ;; Read slot 'sg3' from storage.
     dup2                   ; [slotbase, offset, slotbase, ..]
@@ -393,7 +393,7 @@ accum_loop:
     dup2                   ; [offset, sg3, offset, slotbase, ..]
     mstore                 ; [offset, slotbase, ..]
     push 32                ; [32, offset, slotbase, ..]
-    add                    ; [offset=offset+160, slotbase, ..]
+    add                    ; [offset=offset+32, slotbase, ..]
 
     ;; Read slot 'sg4' from storage.
     swap1                  ; [slotbase, offset, ..]
