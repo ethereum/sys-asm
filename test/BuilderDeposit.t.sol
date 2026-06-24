@@ -193,23 +193,6 @@ contract BuilderDepositTest is Test {
     assertEq(data.length, 184, "system call should drain the queue");
   }
 
-  // testInhibitorReset verifies that after the first system call the excess
-  // value is reset to 0.
-  function testInhibitorReset() public {
-    vm.store(addr, bytes32(0), bytes32(inhibitor));
-    vm.prank(sysaddr);
-    (bool ret, bytes memory data) = addr.call("");
-    assertStorage(excess_slot, 0, "expected excess requests to be reset");
-
-    vm.store(addr, bytes32(0), bytes32(inhibitor));
-    addFailedRequest(address(uint160(0)), makeDeposit(0), min_amount * 1 gwei + 1);
-
-    vm.store(addr, bytes32(0), bytes32(inhibitor-1));
-    vm.prank(sysaddr);
-    (ret, data) = addr.call("");
-    assertStorage(excess_slot, inhibitor-target_per_block-1, "didn't expect excess to be reset");
-  }
-
   // --------------------------------------------------------------------------
   // helpers ------------------------------------------------------------------
   // --------------------------------------------------------------------------

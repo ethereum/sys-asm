@@ -1,9 +1,3 @@
-    ;; Store 0xff..ff as a temporary excess value to avoid requests being queued
-    ;; before the fork.
-    push (1 << 256) - 1  ; [excess]
-    push 0               ; [slot, excess]
-    sstore               ; []
-
     ;; Copy and return code.
     push len(code)       ; [len]
     dup1                 ; [len, len]
