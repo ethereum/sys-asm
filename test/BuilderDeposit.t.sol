@@ -92,7 +92,8 @@ contract BuilderDepositTest is Test {
     // Add more deposit requests than the max per block so that the queue is not
     // immediately emptied.
     for (uint256 i = 0; i < max_per_block+1; i++) {
-      addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + 2);
+      uint256 fee = getCurrentFee();
+      addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, max_per_block+1, "unexpected request count");
 
@@ -102,8 +103,8 @@ contract BuilderDepositTest is Test {
 
     // Add another batch of max deposit requests per block so the next read
     // leaves a single deposit request in the queue.
-    uint256 fee = computeFee(load(excess_slot));
     for (uint256 i = max_per_block+1; i < 2*max_per_block+1; i++) {
+      uint256 fee = getCurrentFee();
       addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, max_per_block, "unexpected request count");
@@ -121,8 +122,8 @@ contract BuilderDepositTest is Test {
 
     // Add five (5) more requests to check that new requests can be added after
     // the queue is reset.
-    fee = computeFee(load(excess_slot));
     for (uint256 i = 2*max_per_block+1; i < 2*max_per_block+6; i++) {
+      uint256 fee = getCurrentFee();
       addRequest(address(uint160(i)), makeDeposit(i), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, 5, "unexpected request count");
@@ -140,7 +141,8 @@ contract BuilderDepositTest is Test {
 
     // Add a bunch of requests.
     for (; idx < count; idx++) {
-      addRequest(address(uint160(idx)), makeDeposit(idx), min_amount * 1 gwei + 1);
+      uint256 fee = getCurrentFee();
+      addRequest(address(uint160(idx)), makeDeposit(idx), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, count, "unexpected request count");
     checkDeposits(0, max_per_block);
@@ -292,5 +294,12 @@ contract BuilderDepositTest is Test {
     for (uint256 i = 0; i < 8; i++) {
       out[80+i] = input[87-i];
     }
+  }
+
+  // getCurrentFee returns the current fee computed by the system contract.
+  function getCurrentFee() internal view returns(uint256) {
+    (bool ok, bytes memory data) = addr.staticcall("");
+    assert(ok);
+    return uint256(bytes32(data));
   }
 }

@@ -56,17 +56,43 @@
 ;;; USER SUBROUTINE ----------------------------------------------------------
 ;;; --------------------------------------------------------------------------
 
-    ;; Compute the fee using fake expo and the current excess deposit requests.
+    ;; Compute the current excess deposit requests.
+    push SLOT_EXCESS       ; [excess_slot]
+    sload                  ; [excess]
+
+    ;; The excess counter doubles as the pre-fork inhibitor, so check if
+    ;; the inhibitor is still active, and exit if so.
+    dup1                   ; [excess, excess]
+    push EXCESS_INHIBITOR  ; [inhibitor, excess, excess]
+    eq                     ; [inhibitor==excess, excess]
+    jumpi @revert          ; [excess]
+
+    ;; Now ensure the excess value also includes any requests added in the
+    ;; current block. To do this, we check if this block already had more than
+    ;; TARGET_PER_BLOCK requests and add the difference onto the long-term excess
+    ;; value.
+    push SLOT_COUNT        ; [count_slot, excess]
+    sload                  ; [count, excess]
+    push 1                 ; [1, count, excess]
+    add                    ; [count=count+1, excess]
+    push TARGET_PER_BLOCK  ; [target, count, excess]
+    dup2                   ; [count, target, count, excess]
+    gt                     ; [count>target, count, excess]
+    jumpi @bump_excess     ; [count, excess]
+
+    pop                    ; [excess]
+    jump @compute_user_fee
+
+bump_excess:               ; [count, excess]
+    push TARGET_PER_BLOCK  ; [target, count, excess]
+    swap1                  ; [count, target, excess]
+    sub                    ; [count-target, excess]
+    add                    ; [excess=excess+count-target]
+
+compute_user_fee:
+    ;; Compute the fee using the fake exponential.
     push FEE_UPDATE_FRACTION
-    push SLOT_EXCESS       ; [excess_slot, update_fraction]
-    sload                  ; [excess, update_fraction]
-
-    ;; Check if the pre-fork inhibitor is still active, revert if so.
-    dup1                   ; [excess, excess, update_fraction]
-    push EXCESS_INHIBITOR  ; [inhibitor, excess, excess, update_fraction]
-    eq                     ; [inhibitor == excess, excess, update_fraction]
-    jumpi @revert          ; [excess, update_fraction]
-
+    swap1                  ; [excess, update_fraction]
     push MIN_FEE           ; [min_fee, excess, update_fraction]
 #include "../common/fake_expo.eas"
 
