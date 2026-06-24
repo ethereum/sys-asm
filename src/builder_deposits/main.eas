@@ -21,12 +21,12 @@
 
 #define SYSTEM_ADDR = .address(0xfffffffffffffffffffffffffffffffffffffffe)
 
-#define SLOT_EXCESS = 0
-#define SLOT_COUNT = 1
+#define SLOT_EXCESS = 0    ; slot: stores the count of excess requests
+#define SLOT_COUNT = 1     ; slot: stores count of requests added in current block
+#define QUEUE_HEAD = 2     ; slot: stores head index of queue
+#define QUEUE_TAIL = 3     ; slot: stores tail index of queue
 
-#define QUEUE_HEAD = 2
-#define QUEUE_TAIL = 3
-#define QUEUE_OFFSET = 4
+#define QUEUE_OFFSET = 4   ; count of storage slots. beyond this, queue data is stored
 
 #define MIN_FEE = 1
 #define TARGET_PER_BLOCK = 32
