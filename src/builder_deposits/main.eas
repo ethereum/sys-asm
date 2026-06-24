@@ -73,8 +73,6 @@
     ;; value.
     push SLOT_COUNT        ; [count_slot, excess]
     sload                  ; [count, excess]
-    push 1                 ; [1, count, excess]
-    add                    ; [count=count+1, excess]
     push TARGET_PER_BLOCK  ; [target, count, excess]
     dup2                   ; [count, target, count, excess]
     gt                     ; [count>target, count, excess]
