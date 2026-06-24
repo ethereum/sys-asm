@@ -411,10 +411,11 @@ accum_loop:
 
     jump @accum_loop       ; [i, count, head_idx, tail_idx]
 
-update_head:
-    ;; All requests have been read, update queue by adding the count read to the
-    ;; current head index.
-    swap2                  ; [head_idx, count, count, tail_idx]
+update_head:               ; [i, count, head_idx, tail_idx]
+    ;; End of loop, so i == count.
+    ;; All requests have been read, update the queue by adding the count
+    ;; read to the current head index.
+    swap2                  ; [head_idx, count, i, tail_idx]
     add                    ; [new_head_idx, count, tail_idx]
 
     ;; If the new head is equal to the tail, reset the queue by zeroing them both.
@@ -502,10 +503,10 @@ store_excess:
     return                 ; []
 
     ;; Revert subroutine.
-revert:
-    push 0
-    push 0
-    revert
+revert:                    ; [...]
+    push 0                 ; [size]
+    push 0                 ; [offset, size]
+    revert                 ; []
 
 ;;; ----------------------------------------------------------------------------
 ;;; MACROS ---------------------------------------------------------------------
