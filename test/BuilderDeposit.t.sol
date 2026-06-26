@@ -141,6 +141,12 @@ contract BuilderDepositTest is Test {
     // Add a bunch of requests.
     for (; idx < count; idx++) {
       uint256 fee = getCurrentFee();
+      if (idx < target_per_block) {
+        assertEq(fee, 1, "unexpected fee for request below excess");
+      } else {
+        assertEq(fee, computeFee(idx - target_per_block), "unexpected fee");
+      }
+
       addRequest(address(uint160(idx)), makeDeposit(idx), min_amount * 1 gwei + fee);
     }
     assertStorage(count_slot, count, "unexpected request count");
@@ -171,6 +177,33 @@ contract BuilderDepositTest is Test {
       idx++;
     }
     assertExcess(0);
+  }
+
+  // testFeePerTx checks how fees are computed within a single block.
+  function testFeePerTx() public {
+    uint256 val = min_amount * 1 gwei;
+
+    // first requests have a fee of 1
+    uint256 idx = 0;
+    for (; idx <= target_per_block+12; idx++) {
+      addRequest(address(uint160(idx)), makeDeposit(idx), val + 1);
+    }
+    assertStorage(count_slot, idx, "unexpected request count in storage");
+
+    // now fee rises. Here we just run it until the fee exceeds 100 gwei.
+    uint256 prevFee = 1;
+    while (true) {
+        uint256 fee = getCurrentFee();
+        if (fee >= 100 gwei) {
+            break;
+        }
+        assertGe(fee, prevFee, "fee did not rise");
+        addRequest(address(uint160(idx)), makeDeposit(idx), val + fee);
+        idx++;
+    }
+
+    assertEq(idx, 463, "unexpected request count");
+    assertStorage(count_slot, idx, "unexpected request count in storage");
   }
 
   // testFeeGetterRejectsValue verifies the empty-calldata fee getter reverts
