@@ -40,9 +40,6 @@
 ;;; PROGRAM START --------------------------------------------------------------
 ;;; ----------------------------------------------------------------------------
 
-    push 1
-    pop
-
     ;; Protect the system subroutine by checking if the caller is the system
     ;; address.
     caller                 ; [caller]
