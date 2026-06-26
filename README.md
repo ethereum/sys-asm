@@ -6,30 +6,35 @@ contracts, such as the ones associated with [EIP-7002][7002] and
 
 ## Getting Started
 
-To setup a dev environment capable of assembling, analyzing, and executing the
-repository's assembly you will need to install [`foundry`][foundry] and
-[`geas`][geas]. This can be accomplished by running:
+To setup a dev environment capable of assembling and testing the contracts,
+you will need to install [`foundry`][foundry] and a Go toolchain.
 
 ```console
 $ curl -L https://foundry.paradigm.xyz | bash
-$ go install github.com/fjl/geas/cmd/geas@latest
 ```
 
-## Building
+## Building bytecode
 
-To assemble `src/withdrawals/main.eas` you will need to invoke `geas`:
+To build all contracts, run `make`:
 
 ```console
-$ geas src/withdrawals/main.eas
-3373fffffffffffffffffffffffffffffffffffffffe146090573615156028575f545f5260205ff35b36603814156101215760115f54600182026001905f5b5f82111560595781019083028483029004916001019190603e565b90939004341061012157600154600101600155600354806003026004013381556001015f3581556001016020359055600101600355005b6003546002548082038060101160a4575060105b5f5b81811460dd5780604c02838201600302600401805490600101805490600101549160601b83528260140152906034015260010160a6565b910180921460ed579060025560f8565b90505f6002555f6003555b5f5460015460028282011161010f5750505f610115565b01600290035b5f555f600155604c025ff35b5f5ffd
+$ make
+...
+
+$ cat bytecode/beacon_root/main.hex
+3373fffffffffffffffffffffffffffffffffffffffe14604b57602036146024575f5ffd5b5f358015604757611fff810690815414603b575f5ffd5b611fff01545f5260205ff35b5f5ffd5b611fff42064281555f3590611fff015500
 ```
+
+The bytecode must be committed alongside any assembly code changes.
+For contracts which are already deployed, the bytecode is not allowed to change,
+so any refactorings, etc. must ensure it is unmodified.
 
 ## Testing
 
-The tests can be executed using [forge][forge]:
+The tests can be executed using `make test`:
 
 ```console
-$ forge test
+$ make test
 [⠒] Compiling...
 [⠒] Compiling 1 files with 0.8.14
 [⠢] Solc 0.8.14 finished in 976.49ms
@@ -45,6 +50,10 @@ Test result: ok. 5 passed; 0 failed; 0 skipped; finished in 870.90ms
 
 Ran 1 test suites: 5 tests passed, 0 failed, 0 skipped (5 total tests)
 ```
+
+You can also use the `forge` tool directly, but be aware that tests rely on the
+bytecode created by `make build`, so you must recompile the contracts before running
+tests.
 
 ## Deployment
 
