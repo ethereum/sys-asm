@@ -19,18 +19,14 @@ jobs:
         with:
           submodules: recursive
       - uses: actions/setup-go@v4
-      - name: Install Geas
-        run: go install github.com/fjl/geas/cmd/geas@latest
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-      - name: Run Forge build
+      - name: Build bytecode
         run: |
-          forge --version
-          forge build --sizes
+          make build
         id: build
-      - name: Run Forge tests
-        run: forge test -vvv
+      - name: Run tests
+        run: |
+          make test
         id: test
-      - name: Check bytecode hash
-        run: scripts/checkhash.sh
