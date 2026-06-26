@@ -12,7 +12,6 @@ env:
 
 jobs:
   check:
-    name: Foundry project
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -22,11 +21,20 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
+
       - name: Build bytecode
         run: |
           make build
         id: build
-      - name: Run tests
+
+      - name: Run Forge build
+        # this is mostly here so that warnings from building forge-std
+        # do not appear in the test output
+        run: |
+          forge --version
+          forge build --sizes
+
+      - name: Run contract tests
         run: |
           make test
         id: test
