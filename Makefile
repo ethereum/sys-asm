@@ -23,6 +23,14 @@ build: geas
 	bin/geas -a -no-nl -o bytecode/consolidations/main.hex src/consolidations/main.eas
 	bin/geas -a -no-nl -o bytecode/consolidations/ctor.hex src/consolidations/ctor.eas
 
+	# 8282
+	mkdir -p bytecode/builder_deposits
+	bin/geas -a -no-nl -o bytecode/builder_deposits/main.hex src/builder_deposits/main.eas
+	bin/geas -a -no-nl -o bytecode/builder_deposits/ctor.hex src/builder_deposits/ctor.eas
+	mkdir -p bytecode/builder_exits
+	bin/geas -a -no-nl -o bytecode/builder_exits/main.hex src/builder_exits/main.eas
+	bin/geas -a -no-nl -o bytecode/builder_exits/ctor.hex src/builder_exits/ctor.eas
+
 	# test helper
 	mkdir -p bytecode/fake_expo_test
 	bin/geas -a -no-nl -o bytecode/fake_expo_test/main.hex src/common/fake_expo_test.eas
