@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "geas-ffi/Geas.sol";
 import "./Test.sol";
 
 uint256 constant target_per_block = 2;
@@ -12,8 +11,8 @@ uint256 constant slots_per_item = 3;
 
 contract BuilderExitTest is Test {
   function setUp() public {
-    vm.etch(addr, Geas.compile("src/builder_exits/main.eas"));
-    vm.etch(fakeExpo, Geas.compile("src/common/fake_expo_test.eas"));
+    vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/builder_exits/main.hex")));
+    vm.etch(fakeExpo, vm.parseBytes(vm.readFile("bytecode/fake_expo_test/main.hex")));
   }
 
   // testInvalidExit checks that common invalid exit requests are rejected.
