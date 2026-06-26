@@ -27,10 +27,10 @@ jobs:
           make build
         id: build
 
-      - name: Ensure bytecode files are up-to-date
+      - name: Ensure committed bytecode files are up-to-date
         run: |
           if ! git diff --exit-code -- bytecode; then
-              echo "::error::bytecode files modified during the build. Run `make build` locally and commit the result."
+              echo "::error::bytecode files modified during the build. Run 'make build' locally and commit the result."
               git status
               exit 1
           fi
