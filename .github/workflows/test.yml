@@ -27,6 +27,14 @@ jobs:
           make build
         id: build
 
+      - name: Ensure bytecode files are up-to-date
+        run: |
+          if ! git diff --exit-code -- bytecode; then
+              echo "::error::bytecode files modified during the build. Run `make build` locally and commit the result."
+              git status
+              exit 1
+          fi
+
       - name: Run Forge build
         # this is mostly here so that warnings from building forge-std
         # do not appear in the test output
