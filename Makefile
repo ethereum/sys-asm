@@ -31,11 +31,11 @@ geas:
 	mkdir -p bin
 	env "GOBIN=$(PWD)/bin" go install github.com/fjl/geas/cmd/geas@v0.3.2
 
-checksums:
+checksums: build
 	shasum -a 256 -c checksums.txt
 
-test:
-	forge test
+test: build checksums
+	forge test -vvv
 
 clean:
 	rm -f bin/geas
