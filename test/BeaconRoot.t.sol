@@ -2,7 +2,6 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
-import "geas-ffi/Geas.sol";
 import "../src/Contract.sol";
 
 address constant addr = 0x0000000000000000000000000000000000000bBB;
@@ -26,7 +25,7 @@ contract ContractTest is Test {
     address unit;
 
     function setUp() public {
-        vm.etch(addr, Geas.compile("src/beacon_root/main.eas"));
+        vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/beacon_root/main.hex")));
         unit = addr;
     }
 

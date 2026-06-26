@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "geas-ffi/Geas.sol";
 import "./Test.sol";
 
 uint256 constant target_per_block = 2;
@@ -10,8 +9,8 @@ uint256 constant inhibitor = uint256(bytes32(0xfffffffffffffffffffffffffffffffff
 
 contract WithdrawalsTest is Test {
   function setUp() public {
-    vm.etch(addr, Geas.compile("src/withdrawals/main.eas"));
-    vm.etch(fakeExpo, Geas.compile("src/common/fake_expo_test.eas"));
+    vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/withdrawals/main.hex")));
+    vm.etch(fakeExpo, vm.parseBytes(vm.readFile("bytecode/fake_expo_test/main.hex")));
   }
 
   // testInvalidWithdrawal checks that common invalid withdrawal requests are rejected.

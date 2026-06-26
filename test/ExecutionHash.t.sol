@@ -2,7 +2,6 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
-import "geas-ffi/Geas.sol";
 import "../src/Contract.sol";
 
 address constant addr = 0x000000000000000000000000000000000000aaaa;
@@ -20,7 +19,7 @@ function hash_idx() view returns (bytes32) {
 
 contract ContractTest is Test {
     function setUp() public {
-        vm.etch(addr, Geas.compile("src/execution_hash/main.eas"));
+        vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/execution_hash/main.hex")));
     }
 
     // testRead verifies the contract returns the expected execution hash.
