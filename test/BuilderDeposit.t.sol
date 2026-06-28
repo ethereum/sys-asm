@@ -204,7 +204,7 @@ contract BuilderDepositTest is Test {
     assertEq(ret, false, "fee getter must reject callvalue");
   }
 
-  // tetSystemCallWrongCalldata checks that the system subroutine reverts
+  // testSystemCallWrongCalldata checks that the system subroutine reverts
   // when it receives incorrect calldata length.
   function testSystemCallWrongCalldata() public {
     addRequest(address(this), makeDeposit(1), min_amount * 1 gwei + 1);
