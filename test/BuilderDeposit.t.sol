@@ -141,11 +141,7 @@ contract BuilderDepositTest is Test {
     // Add a bunch of requests.
     for (; idx < count; idx++) {
       uint256 fee = getCurrentFee();
-      if (idx < target_per_block) {
-        assertEq(fee, 1, "unexpected fee for request below excess");
-      } else {
-        assertEq(fee, computeFee(idx - target_per_block), "unexpected fee");
-      }
+      assertEq(fee, computeFee(idx), "unexpected fee");
 
       addRequest(address(uint160(idx)), makeDeposit(idx), min_amount * 1 gwei + fee);
     }
@@ -182,15 +178,9 @@ contract BuilderDepositTest is Test {
   // testFeePerTx checks how fees are computed within a single block.
   function testFeePerTx() public {
     uint256 val = min_amount * 1 gwei;
-
-    // first requests have a fee of 1
     uint256 idx = 0;
-    for (; idx <= target_per_block+12; idx++) {
-      addRequest(address(uint160(idx)), makeDeposit(idx), val + 1);
-    }
-    assertStorage(count_slot, idx, "unexpected request count in storage");
 
-    // now fee rises. Here we just run it until the fee exceeds 100 gwei.
+    // Fee should always rise. Here we just run it until the fee exceeds 100 gwei.
     uint256 prevFee = 1;
     while (true) {
         uint256 fee = getCurrentFee();
@@ -202,7 +192,7 @@ contract BuilderDepositTest is Test {
         idx++;
     }
 
-    assertEq(idx, 463, "unexpected request count");
+    assertEq(idx, 431, "unexpected request count");
     assertStorage(count_slot, idx, "unexpected request count in storage");
   }
 
@@ -214,15 +204,14 @@ contract BuilderDepositTest is Test {
     assertEq(ret, false, "fee getter must reject callvalue");
   }
 
-  // testSystemCallDrainsRegardlessOfCalldata verifies the system address caller
-  // check precedes the calldata dispatch, so the queue drains on any calldata.
-  function testSystemCallDrainsRegardlessOfCalldata() public {
+  // tetSystemCallWrongCalldata checks that the system subroutine reverts
+  // when it receives incorrect calldata length.
+  function testSystemCallWrongCalldata() public {
     addRequest(address(this), makeDeposit(1), min_amount * 1 gwei + 1);
 
     vm.prank(sysaddr);
-    (bool ret, bytes memory data) = addr.call(hex"01");
-    assertEq(ret, true);
-    assertEq(data.length, 184, "system call should drain the queue");
+    (bool ret,) = addr.call(hex"01");
+    assertEq(ret, false);
   }
 
   // --------------------------------------------------------------------------
@@ -273,6 +262,14 @@ contract BuilderDepositTest is Test {
       assertEq(slice(requests, offset, 184), exp_req, "unexpected deposit record returned");
     }
     return count;
+  }
+
+  function getRequests() internal override returns (bytes memory) {
+    bytes memory input = abi.encodePacked(bytes32(target_per_block), bytes32(max_per_block));
+    vm.prank(sysaddr);
+    (bool ret, bytes memory data) = addr.call(input);
+    assertEq(ret, true);
+    return data;
   }
 
   // makeDeposit constructs a deposit request with a base of x and the minimum

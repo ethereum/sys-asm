@@ -29,8 +29,6 @@
 #define QUEUE_OFFSET = 4   ; count of storage slots. beyond this, queue data is stored
 
 #define MIN_FEE = 1
-#define TARGET_PER_BLOCK = 32
-#define MAX_PER_BLOCK = 256
 #define FEE_UPDATE_FRACTION = 17
 
 #define MIN_AMOUNT = 1000000000 ; minimum deposit amount in gwei (1 ETH, the EIP-7732 builder minimum)
@@ -60,26 +58,11 @@
     sload                  ; [excess]
 
     ;; Now ensure the excess value also includes any requests added in the
-    ;; current block. To do this, we check if this block already had more than
-    ;; TARGET_PER_BLOCK requests and add the difference onto the long-term excess
-    ;; value.
+    ;; current block.
     push SLOT_COUNT        ; [count_slot, excess]
     sload                  ; [count, excess]
-    push TARGET_PER_BLOCK  ; [target, count, excess]
-    dup2                   ; [count, target, count, excess]
-    gt                     ; [count>target, count, excess]
-    jumpi @bump_excess     ; [count, excess]
+    add                    ; [excess=excess+count]
 
-    pop                    ; [excess]
-    jump @compute_user_fee
-
-bump_excess:               ; [count, excess]
-    push TARGET_PER_BLOCK  ; [target, count, excess]
-    swap1                  ; [count, target, excess]
-    sub                    ; [count-target, excess]
-    add                    ; [excess=excess+count-target]
-
-compute_user_fee:
     ;; Compute the fee using the fake exponential.
     push FEE_UPDATE_FRACTION
     swap1                  ; [excess, update_fraction]
@@ -240,6 +223,13 @@ handle_input:
 ;;; SYSTEM SUBROUTINE ----------------------------------------------------------
 ;;; ----------------------------------------------------------------------------
 ;;;
+;;; This takes two parameters from calldata:
+;;;
+;;;  +------------------+---------------+
+;;;  | target_per_block | max_per_block |
+;;;  +------------------+---------------+
+;;;           32               32
+;;;
 ;;; Pop request from queue, update fee accumulator ~~ This is the logic executed
 ;;; by the protocol each block. It reads as many requests as available from the
 ;;; queue, until the max request per block is reached. The requests are returned
@@ -260,7 +250,25 @@ handle_input:
 ;;; queue's head index. The excess requests accumulator is updated so that the
 ;;; new cost of submitting a request is reflected. Finally, the request count is
 ;;; reset.
+
+;;; calldata layout
+#define %sys_target_per_block {
+    push 0
+    calldataload
+}
+#define %sys_max_per_block {
+    push 32
+    calldataload
+}
+
 read_requests:
+    ;; Check input is provided.
+    push 64                ; [expected]
+    calldatasize           ; [size, expected]
+    eq                     ; [size==expected]
+    iszero                 ; [size!=expected]
+    jumpi @revert          ; []
+
     ;; Determine the size of the queue by calculating tail - head.
     push QUEUE_TAIL        ; [tail_idx_slot]
     sload                  ; [tail_idx]
@@ -274,13 +282,13 @@ read_requests:
 
     ;; Determine if count is greater than the max requests.
     dup1                   ; [count, count, head_idx, tail_idx]
-    push MAX_PER_BLOCK     ; [reqs_per_block, count, count, head_idx, tail_idx]
+    %sys_max_per_block     ; [reqs_per_block, count, count, head_idx, tail_idx]
     gt                     ; [reqs_per_block > count, count, head_idx, tail_idx]
     jumpi @begin_loop      ; [count, head_idx, tail_idx]
 
     ;; Discard count, use the max requests per block.
     pop                    ; [head_idx, tail_idx]
-    push MAX_PER_BLOCK     ; [count, head_idx, tail_idx]
+    %sys_max_per_block     ; [count, head_idx, tail_idx]
 
 begin_loop:
     push 0                 ; [i, count, head_idx, tail_idx]
@@ -471,7 +479,7 @@ update_excess:
     ;; If the sum of the previous excess requests and requests added in the
     ;; current block is greater than the target, subtract the target from the sum
     ;; and set it as the new excess requests value.
-    push TARGET_PER_BLOCK  ; [target, added_count, excess, count]
+    %sys_target_per_block  ; [target, added_count, excess, count]
     dup3                   ; [excess, target, added_count, excess, count]
     dup3                   ; [added_count, excess, target, added_count, excess, count]
     add                    ; [added_count+excess, target, added_count, excess, count]
@@ -486,7 +494,7 @@ update_excess:
 
 compute_excess:
     add                    ; [added_count+excess, count]
-    push TARGET_PER_BLOCK  ; [target, added_count+excess, count]
+    %sys_target_per_block  ; [target, added_count+excess, count]
     swap1                  ; [added_count+excess, target, count]
     sub                    ; [new_excess, count]
 

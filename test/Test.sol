@@ -17,7 +17,7 @@ uint256 constant queue_storage_offset = 4;
 abstract contract Test is StdTest {
   // getRequests makes a call to the system contract as the system address in
   // order to trigger a dequeue action.
-  function getRequests() internal returns (bytes memory) {
+  function getRequests() internal virtual returns (bytes memory) {
     vm.prank(sysaddr);
     (bool ret, bytes memory data) = addr.call("");
     assertEq(ret, true);
