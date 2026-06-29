@@ -28,6 +28,8 @@
 
 #define QUEUE_OFFSET = 4   ; count of storage slots. beyond this, queue data is stored
 
+#define INHIBITOR = (1 << 256) - 1
+
 #define MIN_FEE = 1
 #define TARGET_PER_BLOCK = 8
 #define MAX_PER_BLOCK = 64
@@ -58,6 +60,12 @@
     ;; Compute the current excess deposit requests.
     push SLOT_EXCESS       ; [excess_slot]
     sload                  ; [excess]
+
+    ;; Stop deposit if inhibitor is set.
+    dup1                   ; [excess, excess]
+    push INHIBITOR         ; [inhibit, excess, excess]
+    eq                     ; [excess==inhibit, excess]
+    jumpi @revert          ; [excess]
 
     ;; Now ensure the excess value also includes any requests added in the
     ;; current block. To do this, we check if this block already had more than
@@ -461,6 +469,11 @@ reset_queue:
     sstore                 ; [count]
 
 update_excess:
+    ;; If the system call receives any input, disable the queue by
+    ;; storing INHIBITOR into the excess slot.
+    calldatasize           ; [calldatasize, count]
+    jumpi @set_inhibitor   ; [count]
+
     ;; Update the new excess deposit requests.
     push SLOT_EXCESS       ; [excess_slot, count]
     sload                  ; [excess, count]
@@ -489,6 +502,10 @@ compute_excess:
     push TARGET_PER_BLOCK  ; [target, added_count+excess, count]
     swap1                  ; [added_count+excess, target, count]
     sub                    ; [new_excess, count]
+    jump @store_excess
+
+set_inhibitor:             ; [count]
+    push INHIBITOR         ; [new_excess, count]
 
 store_excess:
     push SLOT_EXCESS       ; [excess_slot, new_excess, count]
