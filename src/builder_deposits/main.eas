@@ -469,19 +469,18 @@ reset_queue:
     sstore                 ; [count]
 
 update_excess:
-    ;; If the system call receives any input, disable the queue by
-    ;; storing INHIBITOR into the excess slot.
+    ;; If the system call receives any input, disable the queue by storing INHIBITOR
+    ;; into the excess slot.
     calldatasize           ; [calldatasize, count]
     jumpi @set_inhibitor   ; [count]
 
-    ;; Update the new excess deposit requests.
+    ;; Load current excess and added-in-block counter values.
     push SLOT_EXCESS       ; [excess_slot, count]
     sload                  ; [excess, count]
-
     push SLOT_COUNT        ; [count_slot, excess, count]
     sload                  ; [added_count, excess, count]
 
-    ;; If inhibitor was set, restore it to zero, i.e. re-enable the queue.
+    ;; If inhibitor is set, restore excess to zero, i.e. re-enable the queue.
     dup2                   ; [excess, added_count, excess, count]
     push INHIBITOR         ; [inhibitor, excess, added_count, excess, count]
     eq                     ; [excess==inhibitor, added_count, excess, count]
@@ -497,8 +496,7 @@ update_excess:
     gt                     ; [added_count+excess > target, added_count, excess, count]
     jumpi @compute_excess  ; [added_count, excess, count]
 
-zero_excess:               ; [added_count, excess, count]
-    ;; Zero out excess.
+zero_excess:
     pop                    ; [excess, count]
     pop                    ; [count]
     push 0                 ; [0, count]
