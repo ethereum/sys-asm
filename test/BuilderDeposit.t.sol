@@ -3,8 +3,8 @@ pragma solidity ^0.8.13;
 
 import "./Test.sol";
 
-uint256 constant target_per_block = 32;
-uint256 constant max_per_block = 256;
+uint256 constant target_per_block = 8;
+uint256 constant max_per_block = 64;
 uint256 constant inhibitor = uint256(bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff));
 
 uint256 constant min_amount = 1000000000; // minimum deposit amount in gwei (1 ETH)
@@ -202,7 +202,7 @@ contract BuilderDepositTest is Test {
         idx++;
     }
 
-    assertEq(idx, 463, "unexpected request count");
+    assertEq(idx, 439, "unexpected request count");
     assertStorage(count_slot, idx, "unexpected request count in storage");
   }
 
