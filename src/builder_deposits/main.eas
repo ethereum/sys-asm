@@ -481,6 +481,12 @@ update_excess:
     push SLOT_COUNT        ; [count_slot, excess, count]
     sload                  ; [added_count, excess, count]
 
+    ;; If inhibitor was set, restore it to zero, i.e. re-enable the queue.
+    dup2                   ; [excess, added_count, excess, count]
+    push INHIBITOR         ; [inhibitor, excess, added_count, excess, count]
+    eq                     ; [excess==inhibitor, added_count, excess, count]
+    jumpi @zero_excess     ; [added_count, excess, count]
+
     ;; If the sum of the previous excess requests and requests added in the
     ;; current block is greater than the target, subtract the target from the sum
     ;; and set it as the new excess requests value.
@@ -491,6 +497,7 @@ update_excess:
     gt                     ; [added_count+excess > target, added_count, excess, count]
     jumpi @compute_excess  ; [added_count, excess, count]
 
+zero_excess:               ; [added_count, excess, count]
     ;; Zero out excess.
     pop                    ; [excess, count]
     pop                    ; [count]
