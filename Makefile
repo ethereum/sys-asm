@@ -34,6 +34,10 @@ build: $(GEAS)
 	$(GEAS) -a -no-nl -o bytecode/builder_exits/main.hex src/builder_exits/main.eas
 	$(GEAS) -a -no-nl -o bytecode/builder_exits/ctor.hex src/builder_exits/ctor.eas
 
+	# 7997
+	mkdir -p bytecode/factory
+	$(GEAS) -a -no-nl -o bytecode/factory/main.hex src/factory/main.eas
+
 	# test helper
 	mkdir -p bytecode/fake_expo_test
 	$(GEAS) -a -no-nl -o bytecode/fake_expo_test/main.hex src/common/fake_expo_test.eas
