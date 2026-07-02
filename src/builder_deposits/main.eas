@@ -29,8 +29,8 @@
 #define QUEUE_OFFSET = 4   ; count of storage slots. beyond this, queue data is stored
 
 #define MIN_FEE = 1
-#define TARGET_PER_BLOCK = 32
-#define MAX_PER_BLOCK = 256
+#define TARGET_PER_BLOCK = 8
+#define MAX_PER_BLOCK = 64
 #define FEE_UPDATE_FRACTION = 17
 
 #define MIN_AMOUNT = 1000000000 ; minimum deposit amount in gwei (1 ETH, the EIP-7732 builder minimum)
