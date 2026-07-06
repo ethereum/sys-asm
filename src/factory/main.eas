@@ -1,8 +1,9 @@
 ;;; "Arachnid factory"
 ;;;
 ;;; Ethereum mainnet address: 0x4e59b44847b379578588920cA78FbF26c0B4956C
+;;; EIP-7997 states this contract must be available at the address above.
 ;;;
-;;; This contract simply runs CREATE2 with salt and code taken from input data.
+;;; The contract simply runs CREATE2 with salt and code taken from input data.
 ;;; Calldata layout:
 ;;;
 ;;;    salt :: 32 || code...
