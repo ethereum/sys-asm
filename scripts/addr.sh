@@ -36,6 +36,14 @@ case $1 in
     echo "searching for execution hash deployment data "
     bin/nick search --score=$score --initcode="0x$(cat bytecode/execution_hash/ctor.hex)" --prefix=0x0000 --suffix=0xcccc
     ;;
+  builder_deposits)
+    echo "searching for builder_deposits deployment data "
+    bin/nick search --score=$score --initcode="0x$(cat bytecode/builder_deposits/ctor.hex)" --prefix=0x8282 --suffix=0xdddd
+    ;;
+  builder_exits)
+    echo "searching for builder_exits deployment data "
+    bin/nick search --score=$score --initcode="0x$(cat bytecode/builder_exits/ctor.hex)" --prefix=0x8282 --suffix=0xeeee
+    ;;
   *)
     echo "Invalid option. Usage: $0 {withdrawals|consolidations|exechash|beaconroot}"
     ;;
