@@ -56,11 +56,11 @@
 ;;; USER SUBROUTINE ----------------------------------------------------------
 ;;; --------------------------------------------------------------------------
 
-    ;; Compute the current excess deposit requests.
+    ;; Compute the current excess requests.
     push SLOT_EXCESS       ; [excess_slot]
     sload                  ; [excess]
 
-    ;; Stop deposit if inhibitor is set.
+    ;; Stop if inhibitor is set.
     dup1                   ; [excess, excess]
     push INHIBITOR         ; [inhibit, excess, excess]
     eq                     ; [excess==inhibit, excess]
