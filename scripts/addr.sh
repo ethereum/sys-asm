@@ -9,7 +9,7 @@ fi
 if ! command -v nick &> /dev/null
 then
   echo "nick could not be found, installing..."
-  env "GOBIN=$(PWD)/bin" go install github.com/lightclient/nick@latest
+  env "GOBIN=$PWD/bin" go install github.com/lightclient/nick@latest
   if [ $? -ne 0 ]; then
     echo "Failed to install nick."
     exit 1
