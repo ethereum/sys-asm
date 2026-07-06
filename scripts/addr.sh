@@ -6,7 +6,7 @@ then
   exit 1
 fi
 
-if ! command -v nick &> /dev/null
+if ! test -x bin/nick &> /dev/null
 then
   echo "nick could not be found, installing..."
   env "GOBIN=$PWD/bin" go install github.com/lightclient/nick@latest
