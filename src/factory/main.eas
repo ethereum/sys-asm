@@ -1,0 +1,58 @@
+;;; "Arachnid factory"
+;;;
+;;; Ethereum mainnet address: 0x4e59b44847b379578588920cA78FbF26c0B4956C
+;;; EIP-7997 states this contract must be available at the address above.
+;;;
+;;; The contract simply runs CREATE2 with salt and code taken from input data.
+;;; Calldata layout:
+;;;
+;;;    salt :: 32 || code...
+;;;
+
+#pragma target "constantinople"
+
+#define sub32 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe0
+
+    ;; csize = calldatasize - 32
+    push sub32         ; [sub32]
+    calldatasize       ; [calldatasize, sub32]
+    add                ; [csize]
+
+    ;; Copy code to memory.
+    push 0             ; [0, csize]
+    dup2               ; [csize, 0, csize]
+    push 32            ; [32, csize, 0, csize]
+    dup3               ; [0, dataOffset=32, csize, 0, csize]
+    calldatacopy       ; [0, csize]
+
+    ;; Load salt.
+    dup1               ; [0, 0, csize]
+    calldataload       ; [salt, 0, csize]
+
+    ;; Perform the create.
+    ;; Note all callvalue is forwarded.
+    dup3               ; [csize, salt, 0, csize]
+    dup3               ; [0, csize, salt, 0, csize]
+    callvalue          ; [value, 0, csize, salt, 0, csize]
+    create2            ; [addr, 0, csize]
+    dup1               ; [addr, addr, 0, csize]
+    iszero             ; [addr==0, addr, 0, csize]
+    iszero             ; [addr!=0, addr, 0, csize]
+    jumpi @return      ; [addr, 0, csize]
+
+    ;; Create failed, revert.
+    dup2               ; [0, addr, 0, csize]
+    dup3               ; [0, 0, addr, 0, csize]
+    revert
+
+    ;; Create worked, return the address.
+return:                ; [addr, 0, csize]
+    dup1               ; [addr, addr, 0, csize]
+    dup3               ; [0, addr, addr, 0, csize]
+    mstore             ; [addr, 0, csize]
+    pop                ; [0, csize]
+    pop                ; [csize]
+    pop                ; []
+    push 20            ; [size=20]
+    push 32 - 20       ; [offset=12, size]
+    return
