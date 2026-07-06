@@ -214,17 +214,63 @@ contract BuilderDepositTest is Test {
     assertEq(ret, false, "fee getter must reject callvalue");
   }
 
-  // testSystemCallDrainsRegardlessOfCalldata verifies the system address caller
-  // check precedes the calldata dispatch, so the queue drains on any calldata.
-  function testSystemCallDrainsRegardlessOfCalldata() public {
+  // testSystemCallWithInput verifies that a system call with input drains the queue, and
+  // sets the inhibitor to prevent further additions.
+  function testSystemCallWithInput() public {
     addRequest(address(this), makeDeposit(1), min_amount * 1 gwei + 1);
 
+    // Disable the queue with a system call that carries input data.
     vm.prank(sysaddr);
     (bool ret, bytes memory data) = addr.call(hex"01");
     assertEq(ret, true);
     assertEq(data.length, 184, "system call should drain the queue");
+    assertStorage(excess_slot, inhibitor, "expected inhibitor in excess storage slot");
+
+    // Check that requesting the current fee fails.
+    (ret,) = addr.staticcall("");
+    assertEq(ret, false, "expected fee getter to fail");
+
+    // Check that adding a request fails.
+    addFailedRequest(address(this), makeDeposit(2), min_amount * 1 gwei + 1);
+
+    // Now re-enable the queue through a system call with no input.
+    vm.prank(sysaddr);
+    (ret, data) = addr.call("");
+    assertEq(ret, true);
+    assertEq(data.length, 0, "system call should return empty data since there are no requests");
+    assertStorage(excess_slot, 0, "expected zero excess requests after re-enabling queue");
+
+    // Check that adding a requests succeeds again.
+    addRequest(address(this), makeDeposit(3), min_amount * 1 gwei + 1);
   }
 
+  // testQueueDisableFeeReset verifies that re-enabling the queue resets the fee to 1.
+  function testQueueDisableFeeReset() public {
+    uint256 requestCount = max_per_block*4;
+    for (uint64 i = 0; i < requestCount; i++) {
+      uint256 fee = getCurrentFee();
+      addRequest(address(this), makeDeposit(uint256(i)), min_amount * 1 gwei + fee);
+    }
+    assertStorage(count_slot, requestCount, "unexpected request count");
+
+    // Disable the queue with a system call that carries input data.
+    vm.prank(sysaddr);
+    (bool ret, bytes memory data) = addr.call(hex"01");
+    assertEq(ret, true);
+    assertEq(data.length, max_per_block*184, "system call should drain the queue");
+    assertStorage(excess_slot, inhibitor, "expected inhibitor in excess storage slot");
+
+    // Now re-enable the queue through a system call with no input.
+    vm.prank(sysaddr);
+    (ret, data) = addr.call("");
+    assertEq(ret, true);
+    assertEq(data.length, max_per_block*184, "system call should drain the queue");
+    assertStorage(excess_slot, 0, "expected zero excess requests after re-enabling queue");
+
+    // Check that adding a requests succeeds again with fee 1.
+    addRequest(address(this), makeDeposit(999), min_amount * 1 gwei + 1);
+  }
+  
   // --------------------------------------------------------------------------
   // helpers ------------------------------------------------------------------
   // --------------------------------------------------------------------------
