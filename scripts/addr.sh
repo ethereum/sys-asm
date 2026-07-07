@@ -18,6 +18,7 @@ fi
 
 default_score=5
 score=${2:-$default_score}
+gaslimit=1300000
 
 case $1 in
   beaconroot|b|4788)
@@ -38,11 +39,11 @@ case $1 in
     ;;
   builder_deposits)
     echo "searching for builder_deposits deployment data "
-    bin/nick search --score=$score --initcode="0x$(cat bytecode/builder_deposits/ctor.hex)" --prefix=0x8282 --suffix=0xdddd
+    bin/nick search --score=$score --initcode="0x$(cat bytecode/builder_deposits/ctor.hex)" --prefix=0x8282 --suffix=0xdddd --gaslimit=$gaslimit
     ;;
   builder_exits)
     echo "searching for builder_exits deployment data "
-    bin/nick search --score=$score --initcode="0x$(cat bytecode/builder_exits/ctor.hex)" --prefix=0x8282 --suffix=0xeeee
+    bin/nick search --score=$score --initcode="0x$(cat bytecode/builder_exits/ctor.hex)" --prefix=0x8282 --suffix=0xeeee --gaslimit=$gaslimit
     ;;
   *)
     echo "Invalid option. Usage: $0 {withdrawals|consolidations|exechash|beaconroot}"
