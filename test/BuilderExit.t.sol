@@ -91,7 +91,8 @@ contract BuilderExitTest is Test {
     // Add more exit requests than the max per block (16) so that the queue is
     // not immediately emptied.
     for (uint256 i = 0; i < max_per_block+1; i++) {
-      addRequest(address(uint160(i)), makeExit(i), 2);
+      uint256 fee = getCurrentFee();
+      addRequest(address(uint160(i)), makeExit(i), fee);
     }
     assertStorage(count_slot, max_per_block+1, "unexpected request count");
 
@@ -102,7 +103,8 @@ contract BuilderExitTest is Test {
     // Add another batch of max exit requests per block (16) so the next read
     // leaves a single exit request in the queue.
     for (uint256 i = 17; i < 33; i++) {
-      addRequest(address(uint160(i)), makeExit(i), 2);
+      uint256 fee = getCurrentFee();
+      addRequest(address(uint160(i)), makeExit(i), fee);
     }
     assertStorage(count_slot, max_per_block, "unexpected request count");
 
@@ -120,7 +122,8 @@ contract BuilderExitTest is Test {
     // Add five (5) more requests to check that new requests can be added after
     // the queue is reset.
     for (uint256 i = 33; i < 38; i++) {
-      addRequest(address(uint160(i)), makeExit(i), 4);
+      uint256 fee = getCurrentFee();
+      addRequest(address(uint160(i)), makeExit(i), fee);
     }
     assertStorage(count_slot, 5, "unexpected request count");
 
@@ -137,7 +140,13 @@ contract BuilderExitTest is Test {
 
     // Add a bunch of requests.
     for (; idx < count; idx++) {
-      addRequest(address(uint160(idx)), makeExit(idx), 1);
+      uint256 fee = getCurrentFee();
+      if (idx < target_per_block) {
+        assertEq(fee, 1, "unexpected fee for request below excess");
+      } else {
+        assertEq(fee, computeFee(idx - target_per_block), "unexpected fee");
+      }
+      addRequest(address(uint160(idx)), makeExit(idx), fee);
     }
     assertStorage(count_slot, count, "unexpected request count");
     checkExits(0, max_per_block);
@@ -145,10 +154,10 @@ contract BuilderExitTest is Test {
     uint256 read = max_per_block;
     uint256 excess = count - target_per_block;
 
-    // Attempt to add an exit request with fee too low and an exit request with
-    // fee exactly correct. This should cause the excess requests counter to
-    // decrease by 1 each iteration.
-    for (uint256 i = 0; i < count; i++) {
+    // Attempt to add a deposit request one wei short of the stake plus fee and a
+    // deposit request with exactly stake plus fee. This should cause the excess
+    // requests counter to decrease until it returns to 0.
+    while (excess != 0) {
       assertExcess(excess);
 
       uint256 fee = computeFee(excess);
@@ -158,12 +167,39 @@ contract BuilderExitTest is Test {
       uint256 expected = min(idx-read+1, max_per_block);
       checkExits(read, expected);
 
-      if (excess != 0) {
-        excess--;
+      if (excess + 1 > target_per_block) {
+        excess = excess + 1 - target_per_block;
+      } else {
+        excess = 0;
       }
       read += expected;
       idx++;
     }
+  }
+
+  // testFeePerTx checks how fees are computed within a single block.
+  function testFeePerTx() public {
+    // first requests have a fee of 1
+    uint256 idx = 0;
+    for (; idx <= target_per_block+12; idx++) {
+      addRequest(address(uint160(idx)), makeExit(idx), 1);
+    }
+    assertStorage(count_slot, idx, "unexpected request count in storage");
+
+    // now fee rises. Here we just run it until the fee exceeds 100 gwei.
+    uint256 prevFee = 1;
+    while (true) {
+        uint256 fee = getCurrentFee();
+        if (fee >= 100 gwei) {
+            break;
+        }
+        assertGe(fee, prevFee, "fee did not rise");
+        addRequest(address(uint160(idx)), makeExit(idx), fee);
+        idx++;
+    }
+
+    assertEq(idx, 433, "unexpected request count");
+    assertStorage(count_slot, idx, "unexpected request count in storage");
   }
 
   // testFeeGetterRejectsValue verifies the empty-calldata fee getter reverts
@@ -174,21 +210,61 @@ contract BuilderExitTest is Test {
     assertEq(ret, false, "fee getter must reject callvalue");
   }
 
-  // testInhibitorReset verifies that after the first system call the excess
-  // value is reset to 0.
-  function testInhibitorReset() public {
-    vm.store(addr, bytes32(0), bytes32(inhibitor));
+    // testSystemCallWithInput verifies that a system call with input drains the queue, and
+  // sets the inhibitor to prevent further additions.
+  function testSystemCallWithInput() public {
+    addRequest(address(this), makeExit(1), 1);
+
+    // Disable the queue with a system call that carries input data.
     vm.prank(sysaddr);
-    (bool ret, bytes memory data) = addr.call("");
-    assertStorage(excess_slot, 0, "expected excess requests to be reset");
+    (bool ret, bytes memory data) = addr.call(hex"01");
+    assertEq(ret, true);
+    assertEq(data.length, 68, "system call should drain the queue");
+    assertStorage(excess_slot, inhibitor, "expected inhibitor in excess storage slot");
 
-    vm.store(addr, bytes32(0), bytes32(inhibitor));
-    addFailedRequest(address(uint160(0)), makeExit(0), 1);
+    // Check that requesting the current fee fails.
+    (ret,) = addr.staticcall("");
+    assertEq(ret, false, "expected fee getter to fail");
 
-    vm.store(addr, bytes32(0), bytes32(inhibitor-1));
+    // Check that adding a request fails.
+    addFailedRequest(address(this), makeExit(2), 1);
+
+    // Now re-enable the queue through a system call with no input.
     vm.prank(sysaddr);
     (ret, data) = addr.call("");
-    assertStorage(excess_slot, inhibitor-target_per_block-1, "didn't expect excess to be reset");
+    assertEq(ret, true);
+    assertEq(data.length, 0, "system call should return empty data since there are no requests");
+    assertStorage(excess_slot, 0, "expected zero excess requests after re-enabling queue");
+
+    // Check that adding a requests succeeds again.
+    addRequest(address(this), makeExit(3), 1);
+  }
+
+  // testQueueDisableFeeReset verifies that re-enabling the queue resets the fee to 1.
+  function testQueueDisableFeeReset() public {
+    uint256 requestCount = max_per_block*4;
+    for (uint64 i = 0; i < requestCount; i++) {
+      uint256 fee = getCurrentFee();
+      addRequest(address(this), makeExit(uint256(i)), fee);
+    }
+    assertStorage(count_slot, requestCount, "unexpected request count");
+
+    // Disable the queue with a system call that carries input data.
+    vm.prank(sysaddr);
+    (bool ret, bytes memory data) = addr.call(hex"01");
+    assertEq(ret, true);
+    assertEq(data.length, max_per_block*68, "system call should drain the queue");
+    assertStorage(excess_slot, inhibitor, "expected inhibitor in excess storage slot");
+
+    // Now re-enable the queue through a system call with no input.
+    vm.prank(sysaddr);
+    (ret, data) = addr.call("");
+    assertEq(ret, true);
+    assertEq(data.length, max_per_block*68, "system call should drain the queue");
+    assertStorage(excess_slot, 0, "expected zero excess requests after re-enabling queue");
+
+    // Check that adding a requests succeeds again with fee 1.
+    addRequest(address(this), makeExit(999), 1);
   }
 
   // --------------------------------------------------------------------------
@@ -248,5 +324,12 @@ contract BuilderExitTest is Test {
       pk[i] = bytes1(uint8(x));
     }
     return pk;
+  }
+
+  // getCurrentFee returns the current fee computed by the system contract.
+  function getCurrentFee() internal view returns(uint256) {
+    (bool ok, bytes memory data) = addr.staticcall("");
+    assert(ok);
+    return uint256(bytes32(data));
   }
 }
