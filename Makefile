@@ -1,6 +1,6 @@
 .PHONY: build geas checksums test clean
 
-GEAS_VERSION ?= 0.3.2
+GEAS_VERSION ?= 0.3.3
 GEAS         ?= bin/geas-$(GEAS_VERSION)
 
 build: $(GEAS)
