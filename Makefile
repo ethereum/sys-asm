@@ -38,6 +38,11 @@ build: $(GEAS)
 	mkdir -p bytecode/factory
 	$(GEAS) -a -no-nl -o bytecode/factory/main.hex src/factory/main.eas
 
+	# 8141
+	mkdir -p bytecode/frames_expiry
+	$(GEAS) -a -no-nl -o bytecode/frames_expiry/main.hex src/frames_expiry/main.eas
+	$(GEAS) -a -no-nl -o bytecode/frames_expiry/ctor.hex src/frames_expiry/ctor.eas
+
 	# test helper
 	mkdir -p bytecode/fake_expo_test
 	$(GEAS) -a -no-nl -o bytecode/fake_expo_test/main.hex src/common/fake_expo_test.eas
