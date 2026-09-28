@@ -1,0 +1,55 @@
+;;;  █████╗  ██╗██╗  ██╗ ██╗  █████╗ ███████╗███╗   ███╗
+;;; ██╔══██╗███║██║  ██║███║ ██╔══██╗██╔════╝████╗ ████║
+;;; ╚█████╔╝╚██║███████║╚██║ ███████║███████╗██╔████╔██║
+;;; ██╔══██╗ ██║╚════██║ ██║ ██╔══██║╚════██║██║╚██╔╝██║
+;;; ╚█████╔╝ ██║     ██║ ██║ ██║  ██║███████║██║ ╚═╝ ██║
+;;;  ╚════╝  ╚═╝     ╚═╝ ╚═╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝
+;;;
+;;; This is an implementation of EIP-8141's frames expiry contract. It
+;;; is called by expiry verifier frames with an 8-byte big-endian expiry timestamp
+;;; as calldata, and reverts unless block.timestamp <= expiry.
+
+#pragma target "prague"
+
+;;; ----------------------------------------------------------------------------
+;;; MACROS ---------------------------------------------------------------------
+;;; ----------------------------------------------------------------------------
+
+;;; EXPIRY_DATA_LENGTH is the size of the expiry timestamp input in bytes.
+#define EXPIRY_DATA_LENGTH = 8
+
+;;; ----------------------------------------------------------------------------
+;;; MACROS END -----------------------------------------------------------------
+;;; ----------------------------------------------------------------------------
+
+    ;; Verify input is exactly EXPIRY_DATA_LENGTH bytes long.
+    push EXPIRY_DATA_LENGTH  ; [8]
+    calldatasize             ; [calldatasize, 8]
+    eq                       ; [calldatasize == 8]
+    jumpi @check             ; []
+
+    ;; Input length is invalid, revert.
+    push 0                   ; [0]
+    push 0                   ; [0, 0]
+    revert                   ; []
+
+check:
+    ;; Load the expiry timestamp. The 8 input bytes occupy the high-order end
+    ;; of the loaded word, so shift them down to get the numeric value.
+    push 0                   ; [0]
+    calldataload             ; [word]
+    push 256 - 8*EXPIRY_DATA_LENGTH ; [192, word]
+    shr                      ; [expiry]
+
+    ;; Revert if the deadline has passed.
+    timestamp                ; [timestamp, expiry]
+    gt                       ; [timestamp > expiry]
+    jumpi @expired           ; []
+
+    ;; Deadline has not passed, succeed with no return data.
+    stop
+
+expired:
+    push 0                   ; [0]
+    push 0                   ; [0, 0]
+    revert                   ; []
