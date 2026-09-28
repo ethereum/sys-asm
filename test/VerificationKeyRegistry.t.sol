@@ -21,8 +21,8 @@ contract VerificationKeyRegistryTest is Test {
         vm.etch(registry, vm.parseBytes(vm.readFile("bytecode/verification_key_registry/main.hex")));
     }
 
-    function activationSlot(bytes32 key) internal pure returns (bytes32) {
-        return keccak256(abi.encode(key, uint256(1)));
+    function activationSlot(bytes32 vkHash) internal pure returns (bytes32) {
+        return keccak256(abi.encode(vkHash, uint256(1)));
     }
 
     function callRegistry(address from, bytes memory input, uint256 value) internal returns (bool, bytes memory) {
@@ -31,23 +31,23 @@ contract VerificationKeyRegistryTest is Test {
         return registry.call{value: value}(input);
     }
 
-    function register(bytes32 key, uint256 timestamp) internal returns (bool, bytes memory) {
-        return callRegistry(systemAddress, abi.encodePacked(key, bytes32(timestamp)), 0);
+    function register(bytes32 vkHash, uint256 timestamp) internal returns (bool, bytes memory) {
+        return callRegistry(systemAddress, abi.encodePacked(vkHash, bytes32(timestamp)), 0);
     }
 
-    function reactivate(bytes32 key) internal returns (bool, bytes memory) {
-        return callRegistry(systemAddress, abi.encodePacked(key), 0);
+    function reactivate(bytes32 vkHash) internal returns (bool, bytes memory) {
+        return callRegistry(systemAddress, abi.encodePacked(vkHash), 0);
     }
 
-    function read(bytes32 key) internal returns (bool, bytes memory) {
-        return callRegistry(user, abi.encodePacked(key), 0);
+    function read(bytes32 vkHash) internal returns (bool, bytes memory) {
+        return callRegistry(user, abi.encodePacked(vkHash), 0);
     }
 
     function assertModelState() internal view {
         assertEq(vm.load(registry, bytes32(uint256(0))), modelCurrent);
         for (uint256 i = 0; i <= 4; i++) {
-            bytes32 key = bytes32(i);
-            assertEq(vm.load(registry, activationSlot(key)), bytes32(modelActivation[key]));
+            bytes32 vkHash = bytes32(i);
+            assertEq(vm.load(registry, activationSlot(vkHash)), bytes32(modelActivation[vkHash]));
         }
     }
 
@@ -72,7 +72,7 @@ contract VerificationKeyRegistryTest is Test {
         assertEq(vm.load(deployed, bytes32(uint256(0))), bytes32(0));
     }
 
-    function testRegisterAndReadCurrentOrExplicitKey() public {
+    function testRegisterAndReadCurrentOrExplicitVkHash() public {
         (bool ok, bytes memory output) = read(bytes32(0));
         assertFalse(ok);
         assertEq(output, hex"");
@@ -120,7 +120,7 @@ contract VerificationKeyRegistryTest is Test {
         assertEq(vm.load(registry, activationSlot(K3)), bytes32(0));
     }
 
-    function testReactivateRegisteredKey() public {
+    function testReactivateRegisteredVkHash() public {
         (bool ok,) = register(K1, T1);
         assertTrue(ok);
         (ok,) = register(K2, T2);
@@ -197,24 +197,24 @@ contract VerificationKeyRegistryTest is Test {
         assertEq(writes.length, 0);
     }
 
-    function testFuzzRegisterAndRead(bytes32 key, uint64 timestamp) public {
-        vm.assume(key != bytes32(0));
+    function testFuzzRegisterAndRead(bytes32 vkHash, uint64 timestamp) public {
+        vm.assume(vkHash != bytes32(0));
         vm.assume(timestamp != 0);
 
-        (bool ok,) = register(key, timestamp);
+        (bool ok,) = register(vkHash, timestamp);
         assertTrue(ok);
 
         bytes memory output;
         (ok, output) = read(bytes32(0));
         assertTrue(ok);
-        assertEq(output, abi.encodePacked(key, bytes32(uint256(timestamp))));
-        assertEq(vm.load(registry, activationSlot(key)), bytes32(uint256(timestamp)));
+        assertEq(output, abi.encodePacked(vkHash, bytes32(uint256(timestamp))));
+        assertEq(vm.load(registry, activationSlot(vkHash)), bytes32(uint256(timestamp)));
     }
 
     function testFuzzStateMachine(bytes32 seed) public {
         for (uint256 i = 0; i < 24; i++) {
             uint256 word = uint256(keccak256(abi.encode(seed, i)));
-            bytes32 key = bytes32(word % 5);
+            bytes32 vkHash = bytes32(word % 5);
             uint256 timestampChoice = (word >> 8) % 5;
             uint256 timestamp;
             if (timestampChoice == 1) {
@@ -233,31 +233,31 @@ contract VerificationKeyRegistryTest is Test {
             bytes memory output;
 
             if (action == 0) {
-                expected =
-                    key != bytes32(0) && timestamp != 0 && timestamp <= type(uint64).max && modelActivation[key] == 0;
-                (ok, output) = register(key, timestamp);
+                expected = vkHash != bytes32(0) && timestamp != 0 && timestamp <= type(uint64).max
+                    && modelActivation[vkHash] == 0;
+                (ok, output) = register(vkHash, timestamp);
                 assertEq(ok, expected);
                 assertEq(output, hex"");
                 if (expected) {
-                    modelActivation[key] = timestamp;
-                    modelCurrent = key;
+                    modelActivation[vkHash] = timestamp;
+                    modelCurrent = vkHash;
                 }
             } else if (action == 1) {
-                expected = key != bytes32(0) && modelActivation[key] != 0;
-                (ok, output) = reactivate(key);
+                expected = vkHash != bytes32(0) && modelActivation[vkHash] != 0;
+                (ok, output) = reactivate(vkHash);
                 assertEq(ok, expected);
                 assertEq(output, hex"");
                 if (expected) {
-                    modelCurrent = key;
+                    modelCurrent = vkHash;
                 }
             } else if (action == 2) {
-                bytes32 selectedKey = key == bytes32(0) ? modelCurrent : key;
-                expected = selectedKey != bytes32(0) && modelActivation[selectedKey] != 0;
-                (ok, output) = read(key);
+                bytes32 selectedVkHash = vkHash == bytes32(0) ? modelCurrent : vkHash;
+                expected = selectedVkHash != bytes32(0) && modelActivation[selectedVkHash] != 0;
+                (ok, output) = read(vkHash);
                 assertEq(ok, expected);
                 bytes memory expectedOutput;
                 if (expected) {
-                    expectedOutput = abi.encodePacked(selectedKey, bytes32(modelActivation[selectedKey]));
+                    expectedOutput = abi.encodePacked(selectedVkHash, bytes32(modelActivation[selectedVkHash]));
                 }
                 assertEq(output, expectedOutput);
             } else if (action == 3) {
@@ -278,7 +278,7 @@ contract VerificationKeyRegistryTest is Test {
             } else {
                 address from = ((word >> 24) & 1) == 0 ? user : systemAddress;
                 bytes memory input =
-                    from == systemAddress ? abi.encodePacked(key, bytes32(timestamp)) : abi.encodePacked(key);
+                    from == systemAddress ? abi.encodePacked(vkHash, bytes32(timestamp)) : abi.encodePacked(vkHash);
                 (ok, output) = callRegistry(from, input, 1);
                 assertFalse(ok);
                 assertEq(output, hex"");
