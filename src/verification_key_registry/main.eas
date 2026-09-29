@@ -1,7 +1,8 @@
 ;;; EIP-8357 EVM verification key registry.
 ;;;
-;;; The system address registers a verification key hash together with its
-;;; original activation timestamp, or reactivates a previously registered hash.
+;;; The system address registers a verification key hash together with the
+;;; schema ID of the stateless input its program accepts, or reactivates a
+;;; previously registered hash.
 ;;; Other callers read either an explicit hash or the current hash by passing
 ;;; zero.
 
@@ -18,15 +19,15 @@
 ;;; -----------------------------------------------------------------------------
 
 ;;; Compute keccak256(vk_hash || uint256(1)), where vk_hash is already stored
-;;; at memory[0:32]. This is the Solidity mapping slot for the hash's activation
-;;; timestamp.
-#define %activation_slot {
+;;; at memory[0:32]. This is the Solidity mapping slot for the hash's schema
+;;; ID.
+#define %schema_id_slot {
     push 1             ; [1, ...]
     push 32            ; [32, 1, ...]
     mstore             ; [...]
     push 64            ; [64, ...]
     push 0             ; [0, 64, ...]
-    keccak256          ; [activation_slot, ...]
+    keccak256          ; [schema_id_slot, ...]
 }
 
 ;;; -----------------------------------------------------------------------------
@@ -65,17 +66,17 @@ read_entry:            ; [vk_hash]
     push 0             ; [0, vk_hash]
     mstore             ; []
 
-    ;; Load the selected hash's original activation timestamp.
-    %activation_slot   ; [activation_slot]
-    sload              ; [timestamp]
+    ;; Load the selected hash's schema ID.
+    %schema_id_slot    ; [schema_id_slot]
+    sload              ; [schema_id]
 
-    dup1               ; [timestamp, timestamp]
-    iszero             ; [timestamp==0, timestamp]
-    jumpi @throw       ; [timestamp]
-    push 32            ; [32, timestamp]
+    dup1               ; [schema_id, schema_id]
+    iszero             ; [schema_id==0, schema_id]
+    jumpi @throw       ; [schema_id]
+    push 32            ; [32, schema_id]
     mstore             ; []
 
-    ;; Return vk_hash || activation_timestamp.
+    ;; Return vk_hash || schema_id.
     push 64            ; [64]
     push 0             ; [0, 64]
     return             ; []
@@ -87,7 +88,7 @@ update:                ; []
     eq                 ; [calldatasize==32]
     jumpi @reactivate  ; []
 
-    ;; A registration is vk_hash || activation_timestamp.
+    ;; A registration is vk_hash || schema_id.
     push 64            ; [64]
     calldatasize       ; [calldatasize, 64]
     sub                ; [calldatasize-64]
@@ -104,25 +105,25 @@ update:                ; []
     mstore             ; [vk_hash]
 
     ;; A hash may be registered only once.
-    %activation_slot   ; [activation_slot, vk_hash]
-    dup1               ; [activation_slot, activation_slot, vk_hash]
-    sload              ; [stored_timestamp, activation_slot, vk_hash]
-    jumpi @throw       ; [activation_slot, vk_hash]
+    %schema_id_slot    ; [schema_id_slot, vk_hash]
+    dup1               ; [schema_id_slot, schema_id_slot, vk_hash]
+    sload              ; [stored_schema_id, schema_id_slot, vk_hash]
+    jumpi @throw       ; [schema_id_slot, vk_hash]
 
-    ;; The activation timestamp must be in [1, 2**64 - 1].
-    push 32            ; [32, activation_slot, vk_hash]
-    calldataload       ; [timestamp, activation_slot, vk_hash]
-    dup1               ; [timestamp, timestamp, activation_slot, vk_hash]
-    iszero             ; [timestamp==0, timestamp, activation_slot, vk_hash]
-    jumpi @throw       ; [timestamp, activation_slot, vk_hash]
-    dup1               ; [timestamp, timestamp, activation_slot, vk_hash]
-    push 64            ; [64, timestamp, timestamp, activation_slot, vk_hash]
-    shr                ; [timestamp>>64, timestamp, activation_slot, vk_hash]
-    jumpi @throw       ; [timestamp, activation_slot, vk_hash]
+    ;; The schema ID must be in [1, 2**16 - 1].
+    push 32            ; [32, schema_id_slot, vk_hash]
+    calldataload       ; [schema_id, schema_id_slot, vk_hash]
+    dup1               ; [schema_id, schema_id, schema_id_slot, vk_hash]
+    iszero             ; [schema_id==0, schema_id, schema_id_slot, vk_hash]
+    jumpi @throw       ; [schema_id, schema_id_slot, vk_hash]
+    dup1               ; [schema_id, schema_id, schema_id_slot, vk_hash]
+    push 16            ; [16, schema_id, schema_id, schema_id_slot, vk_hash]
+    shr                ; [schema_id>>16, schema_id, schema_id_slot, vk_hash]
+    jumpi @throw       ; [schema_id, schema_id_slot, vk_hash]
 
-    ;; Store the timestamp at activation_slot(vk_hash), then make vk_hash
+    ;; Store the schema ID at schema_id_slot(vk_hash), then make vk_hash
     ;; current.
-    swap1              ; [activation_slot, timestamp, vk_hash]
+    swap1              ; [schema_id_slot, schema_id, vk_hash]
     sstore             ; [vk_hash]
     push 0             ; [0, vk_hash]
     sstore             ; []
@@ -139,12 +140,12 @@ reactivate:            ; []
     push 0             ; [0, vk_hash, vk_hash]
     mstore             ; [vk_hash]
 
-    %activation_slot   ; [activation_slot, vk_hash]
-    sload              ; [timestamp, vk_hash]
-    iszero             ; [timestamp==0, vk_hash]
+    %schema_id_slot    ; [schema_id_slot, vk_hash]
+    sload              ; [schema_id, vk_hash]
+    iszero             ; [schema_id==0, vk_hash]
     jumpi @throw       ; [vk_hash]
 
-    ;; Make the historical hash current without changing its timestamp.
+    ;; Make the historical hash current without changing its schema ID.
     push 0             ; [0, vk_hash]
     sstore             ; []
     stop               ; []
