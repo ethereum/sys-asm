@@ -1,0 +1,156 @@
+;;; EIP-8357 EVM verification key registry.
+;;;
+;;; The system address registers a verification key hash together with the
+;;; schema ID of the stateless input its program accepts, or reactivates a
+;;; previously registered hash.
+;;; Other callers read either an explicit hash or the current hash by passing
+;;; zero.
+
+#pragma target "prague"
+
+;;; -----------------------------------------------------------------------------
+;;; CONSTANTS -------------------------------------------------------------------
+;;; -----------------------------------------------------------------------------
+
+#define SYSADDR = .address(0xfffffffffffffffffffffffffffffffffffffffe)
+
+;;; -----------------------------------------------------------------------------
+;;; MACROS ----------------------------------------------------------------------
+;;; -----------------------------------------------------------------------------
+
+;;; Compute keccak256(vk_hash || uint256(1)), where vk_hash is already stored
+;;; at memory[0:32]. This is the Solidity mapping slot for the hash's schema
+;;; ID.
+#define %schema_id_slot {
+    push 1             ; [1, ...]
+    push 32            ; [32, 1, ...]
+    mstore             ; [...]
+    push 64            ; [64, ...]
+    push 0             ; [0, 64, ...]
+    keccak256          ; [schema_id_slot, ...]
+}
+
+;;; -----------------------------------------------------------------------------
+;;; PROGRAM START ---------------------------------------------------------------
+;;; -----------------------------------------------------------------------------
+
+    ;; All calls must have zero value.
+    callvalue          ; [callvalue]
+    jumpi @throw       ; []
+
+    ;; The system address selects the update path. All other callers read.
+    caller             ; [caller]
+    push SYSADDR       ; [sysaddr, caller]
+    eq                 ; [caller==sysaddr]
+    jumpi @update      ; []
+
+    ;; A read takes exactly one bytes32 verification key hash.
+    push 32            ; [32]
+    calldatasize       ; [calldatasize, 32]
+    sub                ; [calldatasize-32]
+    jumpi @throw       ; []
+
+    ;; A zero hash selects the current hash stored in slot zero. A nonzero hash
+    ;; is read directly.
+    push 0             ; [0]
+    calldataload       ; [vk_hash]
+    dup1               ; [vk_hash, vk_hash]
+    jumpi @read_entry  ; [vk_hash]
+    sload              ; [current_vk_hash]
+
+read_entry:            ; [vk_hash]
+    ;; Reject a zero current hash and retain the selected hash in memory.
+    dup1               ; [vk_hash, vk_hash]
+    iszero             ; [vk_hash==0, vk_hash]
+    jumpi @throw       ; [vk_hash]
+    push 0             ; [0, vk_hash]
+    mstore             ; []
+
+    ;; Load the selected hash's schema ID.
+    %schema_id_slot    ; [schema_id_slot]
+    sload              ; [schema_id]
+
+    dup1               ; [schema_id, schema_id]
+    iszero             ; [schema_id==0, schema_id]
+    jumpi @throw       ; [schema_id]
+    push 32            ; [32, schema_id]
+    mstore             ; []
+
+    ;; Return vk_hash || schema_id.
+    push 64            ; [64]
+    push 0             ; [0, 64]
+    return             ; []
+
+update:                ; []
+    ;; A 32-byte system call reactivates a registered hash.
+    push 32            ; [32]
+    calldatasize       ; [calldatasize, 32]
+    eq                 ; [calldatasize==32]
+    jumpi @reactivate  ; []
+
+    ;; A registration is vk_hash || schema_id.
+    push 64            ; [64]
+    calldatasize       ; [calldatasize, 64]
+    sub                ; [calldatasize-64]
+    jumpi @throw       ; []
+
+    ;; The hash must be nonzero.
+    push 0             ; [0]
+    calldataload       ; [vk_hash]
+    dup1               ; [vk_hash, vk_hash]
+    iszero             ; [vk_hash==0, vk_hash]
+    jumpi @throw       ; [vk_hash]
+    dup1               ; [vk_hash, vk_hash]
+    push 0             ; [0, vk_hash, vk_hash]
+    mstore             ; [vk_hash]
+
+    ;; A hash may be registered only once.
+    %schema_id_slot    ; [schema_id_slot, vk_hash]
+    dup1               ; [schema_id_slot, schema_id_slot, vk_hash]
+    sload              ; [stored_schema_id, schema_id_slot, vk_hash]
+    jumpi @throw       ; [schema_id_slot, vk_hash]
+
+    ;; The schema ID must be in [1, 2**16 - 1].
+    push 32            ; [32, schema_id_slot, vk_hash]
+    calldataload       ; [schema_id, schema_id_slot, vk_hash]
+    dup1               ; [schema_id, schema_id, schema_id_slot, vk_hash]
+    iszero             ; [schema_id==0, schema_id, schema_id_slot, vk_hash]
+    jumpi @throw       ; [schema_id, schema_id_slot, vk_hash]
+    dup1               ; [schema_id, schema_id, schema_id_slot, vk_hash]
+    push 16            ; [16, schema_id, schema_id, schema_id_slot, vk_hash]
+    shr                ; [schema_id>>16, schema_id, schema_id_slot, vk_hash]
+    jumpi @throw       ; [schema_id, schema_id_slot, vk_hash]
+
+    ;; Store the schema ID at schema_id_slot(vk_hash), then make vk_hash
+    ;; current.
+    swap1              ; [schema_id_slot, schema_id, vk_hash]
+    sstore             ; [vk_hash]
+    push 0             ; [0, vk_hash]
+    sstore             ; []
+    stop               ; []
+
+reactivate:            ; []
+    ;; The hash must be nonzero and already registered.
+    push 0             ; [0]
+    calldataload       ; [vk_hash]
+    dup1               ; [vk_hash, vk_hash]
+    iszero             ; [vk_hash==0, vk_hash]
+    jumpi @throw       ; [vk_hash]
+    dup1               ; [vk_hash, vk_hash]
+    push 0             ; [0, vk_hash, vk_hash]
+    mstore             ; [vk_hash]
+
+    %schema_id_slot    ; [schema_id_slot, vk_hash]
+    sload              ; [schema_id, vk_hash]
+    iszero             ; [schema_id==0, vk_hash]
+    jumpi @throw       ; [vk_hash]
+
+    ;; Make the historical hash current without changing its schema ID.
+    push 0             ; [0, vk_hash]
+    sstore             ; []
+    stop               ; []
+
+throw:                 ; [...]
+    push 0             ; [0, ...]
+    push 0             ; [0, 0, ...]
+    revert             ; []
