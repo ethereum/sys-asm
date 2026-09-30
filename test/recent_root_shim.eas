@@ -69,7 +69,7 @@
     push2 @fail         ; [@fail, len > 1152, len]
     jumpi               ; [len]
 
-    slotnum             ; [cur, len]
+    number              ; [cur, len]
     push1 0x00          ; [off, cur, len]
 
 validate:
@@ -171,7 +171,7 @@ write:
     push ENTRY_DOMAIN   ; [ENTRY_DOMAIN, source_id, source_id]
     push1 0x40          ; [0x40, ENTRY_DOMAIN, source_id, source_id]
     mstore              ; [source_id, source_id]   mem[0x40..0x60] = ENTRY_DOMAIN
-    slotnum             ; [slot, source_id, source_id]
+    number              ; [slot, source_id, source_id]
     push1 0x68          ; [0x68, slot, source_id, source_id]
     mstore              ; [source_id, source_id]   mem[0x80..0x88] = uint64_be(slot)
     push1 0x60          ; [0x60, source_id, source_id]
@@ -191,7 +191,7 @@ write:
     push1 0xa8          ; [0xa8, STORAGE_DOMAIN, source_id, entry_hash, source_id]
     mstore              ; [source_id, entry_hash, source_id]   mem[0xa8..0xc8] = STORAGE_DOMAIN
     push2 RING_MASK     ; [0x1fff, source_id, entry_hash, source_id]
-    slotnum             ; [slot, 0x1fff, source_id, entry_hash, source_id]
+    number              ; [slot, 0x1fff, source_id, entry_hash, source_id]
     and                 ; [i, source_id, entry_hash, source_id]
     push1 0xd0          ; [0xd0, i, source_id, entry_hash, source_id]
     mstore              ; [source_id, entry_hash, source_id]   mem[0xe8..0xf0] = uint64_be(i)

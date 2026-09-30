@@ -5,67 +5,159 @@ import "forge-std/Test.sol";
 
 address constant addr = 0x0000000000000000000000000000000000008272;
 
-// EIP-8272 recent-root predeploy.
-//
-// The write path reads the beacon slot with the EIP-7843 SLOTNUM opcode (0x4b),
-// which is not available under this repo's `prague` EVM, so the shipped runtime
-// cannot be exercised directly here. The guard tests below run the shipped
-// runtime and cover the calldata guard, whose reverts all halt before SLOTNUM is
-// reached. The write-path test runs a slot-shimmed build of the same source
-// (test/recent_root_slotnum1.eas, SLOTNUM -> push1 0x01) so the derivation and
-// SSTORE can be checked against EIP-8272's published Reference vector. The real
-// SLOTNUM opcode itself is exercised on an EIP-7843 EVM at the client level and
-// end to end on the two-client devnet.
 contract RecentRootTest is Test {
+    uint256 constant RING = 8192;
+
     address unit;
+    address shim;
+
+    address source = address(0x01);
+    bytes32 salt = bytes32(0);
+    bytes32 sourceId = 0xb9382d35273c75a50631a3e84d3c75ec9266e2b18c35a627e16cdbf26a18ca85;
+    bytes32 refStorageKey = 0x5f027aa1cbe2df279bf6518edd4b44ea5409fd800189ec35224e10ab05e574c3;
+    bytes32 refEntryHash = 0x0a0d1254c851be5a133b4c9a9e300f5602fc0f43dbe65aa6a66930d4ca0a51b8;
 
     function setUp() public {
         vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/recent_root/main.hex")));
         unit = addr;
+        shim = address(uint160(uint256(keccak256("recent-root-number-shim"))));
+        vm.etch(shim, vm.parseBytes(vm.readFile("test/recent_root_shim.hex")));
     }
 
-    // A well-shaped write is salt(32) || root(32); a nonzero call value must be rejected.
+    function write(uint256 slot, bytes32 root) internal {
+        vm.roll(slot);
+        vm.prank(source);
+        (bool ok,) = shim.call(abi.encodePacked(salt, root));
+        assertTrue(ok);
+    }
+
+    function tuple(uint64 slot, bytes32 root) internal view returns (bytes memory) {
+        return abi.encodePacked(sourceId, slot, root);
+    }
+
+    function validate(uint256 current, bytes memory data) internal returns (bool ok, bytes memory ret) {
+        vm.roll(current);
+        (ok, ret) = shim.staticcall(data);
+    }
+
     function testRejectsNonzeroValue() public {
         vm.deal(address(this), 1 ether);
-        bytes memory data = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
-        (bool ret,) = unit.call{value: 1}(data);
+        (bool ret,) = unit.call{value: 1}(abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2))));
+        assertFalse(ret);
+        (ret,) = unit.call{value: 1}(tuple(1, bytes32(uint256(2))));
         assertFalse(ret);
     }
 
-    // Any calldata length other than 64 bytes must be rejected.
     function testRejectsBadCalldataSize() public {
-        (bool ret,) = unit.call(hex"");
-        assertFalse(ret);
-
-        // 63 bytes
-        (ret,) = unit.call(new bytes(63));
-        assertFalse(ret);
-
-        // 65 bytes
-        (ret,) = unit.call(new bytes(65));
-        assertFalse(ret);
+        uint256[8] memory sizes = [uint256(0), 1, 63, 65, 71, 73, 145, 17 * 72];
+        for (uint256 i = 0; i < sizes.length; i++) {
+            (bool ret,) = unit.call(new bytes(sizes[i]));
+            assertFalse(ret);
+        }
     }
 
-    // Full write path against EIP-8272's published Reference vector (current_slot = 2):
-    //   source_address = 0x..01, salt = 0, slot = 1, root = 2
-    //   storage_key    = 0x5f027aa1..., entry_hash = 0x0a0d1254...
-    // Runs the slot-shimmed build so it executes under prague; the shim fixes the
-    // slot to 1 in place of SLOTNUM, matching the vector's slot.
-    function testWritePathMatchesReferenceVector() public {
-        address shim = address(uint160(uint256(keccak256("recent-root-slotnum1-shim"))));
-        vm.etch(shim, vm.parseBytes(vm.readFile("test/recent_root_slotnum1.hex")));
+    function testWriteMatchesReferenceVector() public {
+        write(1, bytes32(uint256(2)));
+        assertEq(vm.load(shim, refStorageKey), refEntryHash);
+        assertEq(vm.load(shim, keccak256("some-unrelated-slot")), bytes32(0));
+    }
 
-        bytes memory data = abi.encodePacked(bytes32(0), bytes32(uint256(2)));
-        vm.prank(address(0x01));
-        (bool ok,) = shim.call(data);
+    function testWriteFailsInStaticContext() public {
+        vm.roll(1);
+        vm.prank(source);
+        (bool ok,) = shim.staticcall(abi.encodePacked(salt, bytes32(uint256(2))));
+        assertFalse(ok);
+        assertEq(vm.load(shim, refStorageKey), bytes32(0));
+    }
+
+    function testValidationMatchesReferenceVector() public {
+        write(1, bytes32(uint256(2)));
+        bytes memory data =
+            hex"b9382d35273c75a50631a3e84d3c75ec9266e2b18c35a627e16cdbf26a18ca8500000000000000010000000000000000000000000000000000000000000000000000000000000002";
+        assertEq(data, tuple(1, bytes32(uint256(2))));
+        (bool ok, bytes memory ret) = validate(2, data);
         assertTrue(ok);
+        assertEq(ret.length, 0);
+    }
 
-        bytes32 storageKey = 0x5f027aa1cbe2df279bf6518edd4b44ea5409fd800189ec35224e10ab05e574c3;
-        bytes32 entryHash = 0x0a0d1254c851be5a133b4c9a9e300f5602fc0f43dbe65aa6a66930d4ca0a51b8;
-        assertEq(vm.load(shim, storageKey), entryHash);
+    function testValidationChangesNoState() public {
+        write(1, bytes32(uint256(2)));
+        vm.roll(2);
+        vm.record();
+        (bool ok,) = shim.call(tuple(1, bytes32(uint256(2))));
+        assertTrue(ok);
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(shim);
+        assertEq(writes.length, 0);
+        assertEq(reads.length, 1);
+        assertEq(reads[0], refStorageKey);
+    }
 
-        // Nothing lands at any other key: the untouched neighbour index is zero.
-        bytes32 otherKey = keccak256("some-unrelated-slot");
-        assertEq(vm.load(shim, otherKey), bytes32(0));
+    function testValidationRejectsWrongRoot() public {
+        write(1, bytes32(uint256(2)));
+        (bool ok,) = validate(2, tuple(1, bytes32(uint256(3))));
+        assertFalse(ok);
+    }
+
+    function testValidationRejectsUnwrittenEntry() public {
+        (bool ok,) = validate(2, tuple(1, bytes32(0)));
+        assertFalse(ok);
+    }
+
+    function testValidationRejectsCurrentAndFutureSlot() public {
+        write(1, bytes32(uint256(2)));
+        (bool ok,) = validate(1, tuple(1, bytes32(uint256(2))));
+        assertFalse(ok);
+        (ok,) = validate(0, tuple(1, bytes32(uint256(2))));
+        assertFalse(ok);
+    }
+
+    function testValidationWindowEdge() public {
+        write(1, bytes32(uint256(2)));
+        (bool ok,) = validate(1 + RING - 1, tuple(1, bytes32(uint256(2))));
+        assertTrue(ok);
+        (ok,) = validate(1 + RING, tuple(1, bytes32(uint256(2))));
+        assertFalse(ok);
+    }
+
+    function testRingOverwriteInvalidatesOlderEntry() public {
+        write(1, bytes32(uint256(2)));
+        write(1 + RING, bytes32(uint256(5)));
+        (bool ok,) = validate(2 + RING, tuple(uint64(1 + RING), bytes32(uint256(5))));
+        assertTrue(ok);
+        (ok,) = validate(RING, tuple(1, bytes32(uint256(2))));
+        assertFalse(ok);
+    }
+
+    function testValidationLastWriteInSlotWins() public {
+        write(1, bytes32(uint256(2)));
+        write(1, bytes32(uint256(7)));
+        (bool ok,) = validate(2, tuple(1, bytes32(uint256(2))));
+        assertFalse(ok);
+        (ok,) = validate(2, tuple(1, bytes32(uint256(7))));
+        assertTrue(ok);
+    }
+
+    function testValidationChecksEveryTuple() public {
+        write(1, bytes32(uint256(2)));
+        write(3, bytes32(uint256(4)));
+        (bool ok,) = validate(4, bytes.concat(tuple(1, bytes32(uint256(2))), tuple(3, bytes32(uint256(4)))));
+        assertTrue(ok);
+        (ok,) = validate(4, bytes.concat(tuple(1, bytes32(uint256(2))), tuple(3, bytes32(uint256(9)))));
+        assertFalse(ok);
+        (ok,) = validate(4, bytes.concat(tuple(1, bytes32(uint256(9))), tuple(3, bytes32(uint256(4)))));
+        assertFalse(ok);
+    }
+
+    function testValidationAcceptsSixteenDuplicatesAndRejectsSeventeen() public {
+        write(1, bytes32(uint256(2)));
+        bytes memory one = tuple(1, bytes32(uint256(2)));
+        bytes memory data;
+        for (uint256 i = 0; i < 16; i++) {
+            data = bytes.concat(data, one);
+        }
+        (bool ok,) = validate(2, data);
+        assertTrue(ok);
+        (ok,) = validate(2, bytes.concat(data, one));
+        assertFalse(ok);
     }
 }
