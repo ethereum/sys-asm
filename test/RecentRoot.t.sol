@@ -3,13 +3,10 @@ pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
 
-address constant addr = 0x0000000000000000000000000000000000008272;
-
 contract RecentRootTest is Test {
-    uint256 constant RING = 8192;
+    uint64 constant RING = 8192;
 
-    address unit;
-    address shim;
+    address constant unit = 0x8272D9679689Ea2f307140CdF9002D27dC00Ffff;
 
     address source = address(0x01);
     bytes32 salt = bytes32(0);
@@ -18,16 +15,13 @@ contract RecentRootTest is Test {
     bytes32 refEntryHash = 0x0a0d1254c851be5a133b4c9a9e300f5602fc0f43dbe65aa6a66930d4ca0a51b8;
 
     function setUp() public {
-        vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/recent_root/main.hex")));
-        unit = addr;
-        shim = address(uint160(uint256(keccak256("recent-root-number-shim"))));
-        vm.etch(shim, vm.parseBytes(vm.readFile("test/recent_root_shim.hex")));
+        vm.etch(unit, vm.parseBytes(vm.readFile("bytecode/recent_root/main.hex")));
     }
 
-    function write(uint256 slot, bytes32 root) internal {
-        vm.roll(slot);
+    function write(uint64 slot, bytes32 root) internal {
+        vm.rollSlot(slot);
         vm.prank(source);
-        (bool ok,) = shim.call(abi.encodePacked(salt, root));
+        (bool ok,) = unit.call(abi.encodePacked(salt, root));
         assertTrue(ok);
     }
 
@@ -35,39 +29,78 @@ contract RecentRootTest is Test {
         return abi.encodePacked(sourceId, slot, root);
     }
 
-    function validate(uint256 current, bytes memory data) internal returns (bool ok, bytes memory ret) {
-        vm.roll(current);
-        (ok, ret) = shim.staticcall(data);
+    function validate(uint64 current, bytes memory data) internal returns (bool ok, bytes memory ret) {
+        vm.rollSlot(current);
+        (ok, ret) = unit.staticcall(data);
+    }
+
+    function prefix(bytes memory data, uint256 len) internal pure returns (bytes memory out) {
+        out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) {
+            out[i] = data[i];
+        }
     }
 
     function testRejectsNonzeroValue() public {
+        bytes32 root = bytes32(uint256(2));
+        vm.deal(source, 1 ether);
+        vm.rollSlot(1);
+        vm.prank(source);
+        (bool ok,) = unit.call{value: 1}(abi.encodePacked(salt, root));
+        assertFalse(ok);
+        assertEq(vm.load(unit, refStorageKey), bytes32(0));
+
+        // The same write, and a validation of it, succeed without value.
+        write(1, root);
+        vm.rollSlot(2);
         vm.deal(address(this), 1 ether);
-        (bool ret,) = unit.call{value: 1}(abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2))));
-        assertFalse(ret);
-        (ret,) = unit.call{value: 1}(tuple(1, bytes32(uint256(2))));
-        assertFalse(ret);
+        (ok,) = unit.call{value: 1}(tuple(1, root));
+        assertFalse(ok);
+        (ok,) = unit.call(tuple(1, root));
+        assertTrue(ok);
     }
 
     function testRejectsBadCalldataSize() public {
-        uint256[8] memory sizes = [uint256(0), 1, 63, 65, 71, 73, 145, 17 * 72];
-        for (uint256 i = 0; i < sizes.length; i++) {
-            (bool ret,) = unit.call(new bytes(sizes[i]));
-            assertFalse(ret);
+        // The root ends in zero bytes, so a tuple cut short inside its root
+        // zero-pads back to a valid tuple unless the length is checked.
+        bytes32 root = bytes32(bytes1(0x02));
+        write(1, root);
+        bytes memory one = tuple(1, root);
+        bytes memory sixteen;
+        for (uint256 i = 0; i < 16; i++) {
+            sixteen = bytes.concat(sixteen, one);
+        }
+        (bool ok,) = validate(2, one);
+        assertTrue(ok);
+        (ok,) = validate(2, sixteen);
+        assertTrue(ok);
+
+        bytes[6] memory bad = [
+            bytes(""),
+            prefix(one, 41),
+            prefix(one, 71),
+            bytes.concat(one, hex"00"),
+            bytes.concat(one, prefix(one, 71)),
+            prefix(sixteen, 16 * 72 - 1)
+        ];
+        for (uint256 i = 0; i < bad.length; i++) {
+            (ok,) = validate(2, bad[i]);
+            assertFalse(ok);
         }
     }
 
     function testWriteMatchesReferenceVector() public {
         write(1, bytes32(uint256(2)));
-        assertEq(vm.load(shim, refStorageKey), refEntryHash);
-        assertEq(vm.load(shim, keccak256("some-unrelated-slot")), bytes32(0));
+        assertEq(vm.load(unit, refStorageKey), refEntryHash);
+        assertEq(vm.load(unit, keccak256("some-unrelated-slot")), bytes32(0));
     }
 
     function testWriteFailsInStaticContext() public {
-        vm.roll(1);
+        vm.rollSlot(1);
         vm.prank(source);
-        (bool ok,) = shim.staticcall(abi.encodePacked(salt, bytes32(uint256(2))));
+        (bool ok,) = unit.staticcall(abi.encodePacked(salt, bytes32(uint256(2))));
         assertFalse(ok);
-        assertEq(vm.load(shim, refStorageKey), bytes32(0));
+        assertEq(vm.load(unit, refStorageKey), bytes32(0));
     }
 
     function testValidationMatchesReferenceVector() public {
@@ -82,11 +115,11 @@ contract RecentRootTest is Test {
 
     function testValidationChangesNoState() public {
         write(1, bytes32(uint256(2)));
-        vm.roll(2);
+        vm.rollSlot(2);
         vm.record();
-        (bool ok,) = shim.call(tuple(1, bytes32(uint256(2))));
+        (bool ok,) = unit.call(tuple(1, bytes32(uint256(2))));
         assertTrue(ok);
-        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(shim);
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(unit);
         assertEq(writes.length, 0);
         assertEq(reads.length, 1);
         assertEq(reads[0], refStorageKey);
@@ -122,7 +155,7 @@ contract RecentRootTest is Test {
     function testRingOverwriteInvalidatesOlderEntry() public {
         write(1, bytes32(uint256(2)));
         write(1 + RING, bytes32(uint256(5)));
-        (bool ok,) = validate(2 + RING, tuple(uint64(1 + RING), bytes32(uint256(5))));
+        (bool ok,) = validate(2 + RING, tuple(1 + RING, bytes32(uint256(5))));
         assertTrue(ok);
         (ok,) = validate(RING, tuple(1, bytes32(uint256(2))));
         assertFalse(ok);

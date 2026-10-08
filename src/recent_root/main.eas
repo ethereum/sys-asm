@@ -1,4 +1,4 @@
-;;; RECENT_ROOT_CODE — EIP-8272 recent-root predeploy runtime.
+;;; RECENT_ROOT_CODE — EIP-8272 recent root contract runtime.
 ;;;
 ;;; Calls with nonzero value revert. Calldata length selects the operation.
 ;;;

@@ -47,11 +47,6 @@ build: $(GEAS)
 	mkdir -p bytecode/fake_expo_test
 	$(GEAS) -a -no-nl -o bytecode/fake_expo_test/main.hex src/common/fake_expo_test.eas
 
-	# 8272 test shim: the same runtime with SLOTNUM read from NUMBER, so it runs
-	# under the prague EVM and a test picks the slot with vm.roll.
-	sed -E 's/^( +)slotnum( |$$)/\1number \2/' src/recent_root/main.eas > test/recent_root_shim.eas
-	$(GEAS) -a -no-nl -o test/recent_root_shim.hex test/recent_root_shim.eas
-
 checksums: build
 	shasum -a 256 -c checksums.txt
 
