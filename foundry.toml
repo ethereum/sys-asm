@@ -1,5 +1,7 @@
 [profile.default]
 evm_version = 'prague'
+hardfork = 'amsterdam'
+gas_limit = 'max'
 src = 'src'
 out = 'out'
 ffi = true
