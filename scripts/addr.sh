@@ -39,7 +39,7 @@ case $1 in
     ;;
   recent_root|rr|8272)
     echo "searching for recent root deployment data "
-    bin/nick search --score=$score --initcode="0x$(cat bytecode/recent_root/ctor.hex)" --prefix=0x0000 --suffix=0x8272 --gaslimit=$gaslimit
+    bin/nick search --score=$score --initcode="0x$(cat bytecode/recent_root/ctor.hex)" --prefix=0x8272 --suffix=0xffff --gaslimit=$gaslimit
     ;;
   builder_deposits)
     echo "searching for builder_deposits deployment data "
