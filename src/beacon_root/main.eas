@@ -29,6 +29,7 @@
 ;;; ----------------------------------------------------------------------------
 
 ;;; HISTORY_BUFFER_LENGTH as defined in the EIP.
+;;; Push this with PUSH3 to match EIP-4788's deployed bytecode exactly.
 #define BUFLEN = 8191
 
 ;;; SYSADDR is the address which calls the contract to submit a new root.
@@ -75,7 +76,7 @@ loadtime:
     jumpi @throw       ; [input_timestamp]
 
     ;; Compute the timestamp index and load from storage.
-    push BUFLEN        ; [buflen, input_timestamp]
+    push3 BUFLEN       ; [buflen, input_timestamp]
     dup2               ; [input_timestamp, buflen, input_timestamp]
     mod                ; [time_index, input_timestamp]
     swap1              ; [input_timestamp, time_index]
@@ -91,7 +92,7 @@ loadtime:
 
 loadroot:
     ;; Extend index to get root index.
-    push BUFLEN        ; [buflen, time_index]
+    push3 BUFLEN       ; [buflen, time_index]
     add                ; [root_index]
     sload              ; [root]
 
@@ -111,7 +112,7 @@ throw:
 submit:
     ;; Calculate the index the timestamp should be stored at, e.g.
     ;; time_index = (time % buflen).
-    push BUFLEN        ; [buflen]
+    push3 BUFLEN       ; [buflen]
     timestamp          ; [time, buflen]
     mod                ; [time_index]
 
@@ -127,7 +128,7 @@ submit:
     push 0             ; [0, time_index]
     calldataload       ; [root, time_index]
     swap1              ; [time_index, root]
-    push BUFLEN        ; [buflen, time_index, root]
+    push3 BUFLEN       ; [buflen, time_index, root]
     add                ; [root_index, root]
     sstore             ; []
 
