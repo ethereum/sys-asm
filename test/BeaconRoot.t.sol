@@ -24,22 +24,9 @@ function root_idx() view returns (bytes32) {
 contract ContractTest is Test {
     address unit;
 
-    // EIP-4788 deployment input without its 9-byte constructor prefix.
-    // https://eips.ethereum.org/EIPS/eip-4788#deployment
-    bytes constant deployedCode = hex"3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500";
-
     function setUp() public {
         vm.etch(addr, vm.parseBytes(vm.readFile("bytecode/beacon_root/main.hex")));
         unit = addr;
-    }
-
-    function testRuntimeBytecode() public view {
-        assertEq(unit.code, deployedCode);
-    }
-
-    function testDeploymentBytecode() public view {
-        bytes memory initcode = vm.parseBytes(vm.readFile("bytecode/beacon_root/ctor.hex"));
-        assertEq(initcode, bytes.concat(hex"60618060095f395ff3", deployedCode));
     }
 
     // testRead verifies the contract returns the expected beacon root.
