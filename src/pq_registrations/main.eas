@@ -1,16 +1,23 @@
-;;; Post-quantum material registration request contract.
+;;; This is an implementation of EIP-8483's contract handling EL triggered
+;;; registrations of post-quantum material for validators.
 ;;;
-;;; An EIP-7685 request contract in the style of EIP-7002 / EIP-7251. A caller
-;;; (expected to be the execution address in a validator's withdrawal
-;;; credentials) submits a 48-byte validator public key followed by 64 bytes of
-;;; opaque post-quantum material. The contract charges the EIP-7002 style
-;;; dynamic fee, queues a record of
+;;; A caller (expected to be the execution address in a validator's withdrawal
+;;; credentials) submits a 48-byte validator public key, 64 bytes of
+;;; post-quantum material and a 2404-byte leanXMSS proof of possession. The
+;;; contract charges the EIP-7002 style dynamic fee, checks the proof and
+;;; queues a record of
 ;;;
 ;;;     source_address (20) ++ validator_pubkey (48) ++ pq_data (64)
 ;;;
 ;;; and, when called by the system address at the end of a block, dequeues up
 ;;; to MAX_PER_BLOCK records and returns them concatenated. The consensus layer
 ;;; checks that source_address controls the validator.
+;;;
+;;; The first 32 bytes of pq_data are a leanXMSS public key, and the proof is a
+;;; signature by that key which binds it to the validator public key. This
+;;; contract does not verify the signature itself. It calls the contract at
+;;; VERIFIER, which is written in Solidity, and reverts unless that call
+;;; returns 1. The proof is neither stored nor logged.
 ;;;
 ;;; The queue follows the EIP-7251 consolidation request contract, with one
 ;;; more storage slot per item. Unlike EIP-7002, EIP-7251 and EIP-8282, the fee
@@ -49,6 +56,19 @@
 #define INPUT_SIZE = 112   ; the size of (pubkey ++ pq_data)
 #define RECORD_SIZE = 132  ; the size of (address ++ pubkey ++ pq_data)
 #define SLOTS_PER_ITEM = 5 ; (addr, pk[0:32], pk[32:48]++data[0:16], data[16:48], data[48:64])
+
+;;; The proof of possession follows the input in calldata.
+#define PROOF_SIZE = 2404  ; the size of a leanXMSS signature
+#define REQUEST_SIZE = INPUT_SIZE + PROOF_SIZE ; the size of (pubkey ++ pq_data ++ proof)
+
+;;; The verifier takes the part of the input that the proof signs, which is the
+;;; validator public key and the leanXMSS public key, followed by the proof.
+;;;
+;;; The address is a placeholder. The verifier's address is not chosen yet, and
+;;; it has to be set here before this contract is deployed.
+#define VERIFIER = .address(0x848300000000000000000000000000000000ffff)
+#define SIGNED_SIZE = 80   ; the size of (pubkey ++ pq_data[0:32])
+#define VERIFIER_INPUT_SIZE = SIGNED_SIZE + PROOF_SIZE
 
 ;;; ----------------------------------------------------------------------------
 ;;; PROGRAM START --------------------------------------------------------------
@@ -140,10 +160,10 @@ fee:                       ; [exponent, excess, count]
 
 #include "../common/fake_expo.eas"
 
-    ;; If calldatasize matches the expected input size, add the request.
+    ;; If calldatasize matches the expected request size, add the request.
     calldatasize           ; [calldatasize, req_fee, excess, count]
-    push INPUT_SIZE        ; [INPUT_SIZE, calldatasize, req_fee, excess, count]
-    eq                     ; [INPUT_SIZE == calldatasize, req_fee, excess, count]
+    push REQUEST_SIZE      ; [REQUEST_SIZE, calldatasize, req_fee, excess, count]
+    eq                     ; [REQUEST_SIZE == calldatasize, req_fee, excess, count]
     jumpi @handle_input    ; [req_fee, excess, count]
 
     ;; Otherwise calldatasize must be zero (fee getter).
@@ -162,12 +182,12 @@ fee:                       ; [exponent, excess, count]
     return                 ; []
 
 handle_input:
-    ;; Write path. Input layout:
+    ;; Write path. Request layout:
     ;;
-    ;;  +--------+---------+
-    ;;  | pubkey | pq_data |
-    ;;  +--------+---------+
-    ;;      48        64
+    ;;  +--------+---------+-------+
+    ;;  | pubkey | pq_data | proof |
+    ;;  +--------+---------+-------+
+    ;;      48        64      2404
 
     ;; Check that the value covers the fee.
     callvalue              ; [callvalue, req_fee, excess, count]
@@ -179,6 +199,48 @@ handle_input:
     dup3                   ; [count, max_adds, excess, count]
     lt                     ; [count < max_adds, excess, count]
     iszero                 ; [count >= max_adds, excess, count]
+    jumpi @revert          ; [excess, count]
+
+    ;; Check the proof of possession before anything is written. The verifier's
+    ;; input is the request without pq_data[32:64], which the proof does not
+    ;; sign:
+    ;;
+    ;;  +--------+---------------+-------+
+    ;;  | pubkey | pq_data[0:32] | proof |
+    ;;  +--------+---------------+-------+
+    ;;      48          32          2404
+    push SIGNED_SIZE       ; [size, excess, count]
+    push 0                 ; [ost, size, excess, count]
+    push 0                 ; [dest, ost, size, excess, count]
+    calldatacopy           ; [excess, count]
+    push PROOF_SIZE        ; [size, excess, count]
+    push INPUT_SIZE        ; [ost, size, excess, count]
+    push SIGNED_SIZE       ; [dest, ost, size, excess, count]
+    calldatacopy           ; [excess, count]
+
+    push 32                ; [ret_size, excess, count]
+    push 0                 ; [ret_ost, ret_size, excess, count]
+    push VERIFIER_INPUT_SIZE ; [in_size, ret_ost, ret_size, excess, count]
+    push 0                 ; [in_ost, in_size, ret_ost, ret_size, excess, count]
+    push VERIFIER          ; [verifier, in_ost, in_size, ret_ost, ret_size, excess, count]
+    gas                    ; [gas, verifier, in_ost, in_size, ret_ost, ret_size, excess, count]
+    staticcall             ; [success, excess, count]
+    iszero                 ; [!success, excess, count]
+    jumpi @revert          ; [excess, count]
+
+    ;; The proof is valid only if the verifier returned the 32-byte word 1. The
+    ;; size is checked because a call to an address without code succeeds and
+    ;; returns nothing, which leaves the start of the public key at memory 0.
+    returndatasize         ; [returndatasize, excess, count]
+    push 32                ; [32, returndatasize, excess, count]
+    eq                     ; [32 == returndatasize, excess, count]
+    iszero                 ; [32 != returndatasize, excess, count]
+    jumpi @revert          ; [excess, count]
+    push 0                 ; [0, excess, count]
+    mload                  ; [result, excess, count]
+    push 1                 ; [1, result, excess, count]
+    eq                     ; [1 == result, excess, count]
+    iszero                 ; [1 != result, excess, count]
     jumpi @revert          ; [excess, count]
 
     ;; Persist the fee state: excess, count+1 and the current block number.
@@ -232,13 +294,19 @@ handle_input:
     push 1                 ; [1, slot, ..]
     add                    ; [slot, ..]
 
-    ;; Slot 4: pq_data[48:64] ++ 16 zero bytes (calldataload zero-pads).
+    ;; Slot 4: pq_data[48:64] ++ 16 zero bytes. The proof follows pq_data in
+    ;; calldata, so its first 16 bytes are shifted out.
     push 96                ; [96, slot, ..]
-    calldataload           ; [pq_data[48:64] ++ 0x00..00, slot, ..]
+    calldataload           ; [pq_data[48:64] ++ proof[0:16], slot, ..]
+    push 128               ; [128, pq_data[48:64] ++ proof[0:16], slot, ..]
+    shr                    ; [pq_data[48:64], slot, ..]
+    push 128               ; [128, pq_data[48:64], slot, ..]
+    shl                    ; [pq_data[48:64] ++ 0x00..00, slot, ..]
     swap1                  ; [slot, pq_data[48:64] ++ 0x00..00, ..]
     sstore                 ; [..]
 
-    ;; Assemble the log record: caller ++ calldata.
+    ;; Assemble the log record: caller ++ input. This overwrites the start
+    ;; of the verifier's input in memory, which is no longer needed.
     caller                 ; [caller, ..]
     push 96                ; [96, caller, ..]
     shl                    ; [caller<<96, ..]
