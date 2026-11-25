@@ -4,8 +4,7 @@
 ;;; A caller (expected to be the execution address in a validator's withdrawal
 ;;; credentials) submits a 48-byte validator public key, 64 bytes of
 ;;; post-quantum material and a 2404-byte leanXMSS proof of possession. The
-;;; contract charges the EIP-7002 style dynamic fee, checks the proof and
-;;; queues a record of
+;;; contract charges a fee, checks the proof and queues a record of
 ;;;
 ;;;     source_address (20) ++ validator_pubkey (48) ++ pq_data (64)
 ;;;
@@ -20,15 +19,14 @@
 ;;; returns 1. The proof is neither stored nor logged.
 ;;;
 ;;; The queue follows the EIP-7251 consolidation request contract, with one
-;;; more storage slot per item. Unlike EIP-7002, EIP-7251 and EIP-8282, the fee
-;;; state is updated on the write path rather than by the system call: the
-;;; first write in a block folds the previous active block's count into the
-;;; excess and decays it by TARGET_PER_BLOCK for every elapsed block. The fee
-;;; therefore depends only on how fast requests are added, not on whether the
-;;; system call is running, so registrations can be queued before the fork that
-;;; starts draining them. At most MAX_ADDS_PER_BLOCK requests can be added per
-;;; block. As in EIP-8282, a system call with non-empty calldata disables the
-;;; queue by setting the excess inhibitor.
+;;; more storage slot per item. The fee and the system call follow the EIP-8282
+;;; builder exit contract (builder_exits/main.eas), with one difference:
+;;; requests can be queued before the fork that starts the system call. The
+;;; constructor stores PRE_FORK in the excess slot, and while it is there a
+;;; request pays the fixed PRE_FORK_FEE. The first system call replaces it with
+;;; a zero excess, and from then on requests pay the dynamic fee. As in
+;;; EIP-8282, a system call with non-empty calldata disables the queue by
+;;; storing INHIBITOR in the excess slot.
 
 #pragma target "prague"
 
@@ -43,15 +41,19 @@
 
 #define QUEUE_HEAD = 2
 #define QUEUE_TAIL = 3
-#define SLOT_LAST_BLOCK = 4
-#define QUEUE_OFFSET = 5
+#define QUEUE_OFFSET = 4
 
+;;; SLOT_EXCESS holds one of these two values when it isn't an excess. They are
+;;; the two largest words, so the system call tells them from an excess with a
+;;; single comparison.
+#define INHIBITOR = (1 << 256) - 1 ; the queue is disabled, requests revert
+#define PRE_FORK = (1 << 256) - 2  ; no system call yet, requests pay PRE_FORK_FEE
+
+#define PRE_FORK_FEE = 500000000000000 ; 0.0005 ETH
 #define MIN_FEE = 1
 #define TARGET_PER_BLOCK = 128
-#define MAX_ADDS_PER_BLOCK = 256
 #define MAX_PER_BLOCK = 1024
 #define FEE_UPDATE_FRACTION = 17
-#define EXCESS_INHIBITOR = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 
 #define INPUT_SIZE = 112   ; the size of (pubkey ++ pq_data)
 #define RECORD_SIZE = 132  ; the size of (address ++ pubkey ++ pq_data)
@@ -84,99 +86,72 @@
 ;;; USER SUBROUTINE ------------------------------------------------------------
 ;;; ----------------------------------------------------------------------------
 
-    ;; Load the persisted excess.
+    ;; Load the excess.
     push SLOT_EXCESS       ; [excess_slot]
     sload                  ; [excess]
 
-    ;; Revert while the inhibitor is set (the queue is disabled).
+    ;; Revert while the queue is disabled.
     dup1                   ; [excess, excess]
-    push EXCESS_INHIBITOR  ; [inhibitor, excess, excess]
+    push INHIBITOR         ; [inhibitor, excess, excess]
     eq                     ; [inhibitor == excess, excess]
     jumpi @revert          ; [excess]
 
-    ;; Load the count of requests added in the last active block.
+    ;; Before the first system call, the fee is fixed.
+    dup1                   ; [excess, excess]
+    push PRE_FORK          ; [pre_fork, excess, excess]
+    eq                     ; [pre_fork == excess, excess]
+    jumpi @pre_fork_fee    ; [excess]
+
+    ;; Include the requests already added in this block: if the block count
+    ;; exceeds TARGET_PER_BLOCK, add the difference to the excess.
     push SLOT_COUNT        ; [count_slot, excess]
     sload                  ; [count, excess]
-    push SLOT_LAST_BLOCK   ; [last_slot, count, excess]
-    sload                  ; [last, count, excess]
-    dup1                   ; [last, last, count, excess]
-    number                 ; [number, last, last, count, excess]
-    eq                     ; [number == last, last, count, excess]
-    jumpi @same_block      ; [last, count, excess]
+    push TARGET_PER_BLOCK  ; [target, count, excess]
+    dup2                   ; [count, target, count, excess]
+    gt                     ; [count > target, count, excess]
+    jumpi @bump_excess     ; [count, excess]
 
-    ;; First request of this block: roll the fee state forward.
-    ;;   excess = max(0, excess + count - TARGET_PER_BLOCK * (number - last))
-    ;;   count = 0
-    number                 ; [number, last, count, excess]
-    sub                    ; [elapsed, count, excess]
-    push TARGET_PER_BLOCK  ; [target, elapsed, count, excess]
-    mul                    ; [decay, count, excess]
-    swap2                  ; [excess, count, decay]
-    add                    ; [excess+count, decay]
-    dup2                   ; [decay, excess+count, decay]
-    dup2                   ; [excess+count, decay, excess+count, decay]
-    gt                     ; [excess+count > decay, excess+count, decay]
-    jumpi @decay_excess    ; [excess+count, decay]
+    pop                    ; [excess]
+    jump @compute_user_fee ; [excess]
 
-    pop                    ; [decay]
-    pop                    ; []
-    push 0                 ; [excess]
-    jump @new_block        ; [excess]
+bump_excess:               ; [count, excess]
+    push TARGET_PER_BLOCK  ; [target, count, excess]
+    swap1                  ; [count, target, excess]
+    sub                    ; [count-target, excess]
+    add                    ; [excess+count-target]
 
-decay_excess:              ; [excess+count, decay]
-    sub                    ; [excess]
-
-new_block:                 ; [excess]
-    push 0                 ; [count, excess]
-    swap1                  ; [excess, count]
-    jump @compute_user_fee ; [excess, count]
-
-same_block:                ; [last, count, excess]
-    pop                    ; [count, excess]
-    swap1                  ; [excess, count]
-
-compute_user_fee:          ; [excess, count]
-    ;; Include the requests already added in this block: if the block count
-    ;; exceeds TARGET_PER_BLOCK, add the difference to the exponent.
-    push TARGET_PER_BLOCK  ; [target, excess, count]
-    dup3                   ; [count, target, excess, count]
-    gt                     ; [count > target, excess, count]
-    jumpi @bump_exponent   ; [excess, count]
-
-    dup1                   ; [excess, excess, count]
-    jump @fee              ; [excess, excess, count]
-
-bump_exponent:             ; [excess, count]
-    push TARGET_PER_BLOCK  ; [target, excess, count]
-    dup3                   ; [count, target, excess, count]
-    sub                    ; [count-target, excess, count]
-    dup2                   ; [excess, count-target, excess, count]
-    add                    ; [exponent, excess, count]
-
-fee:                       ; [exponent, excess, count]
-    push FEE_UPDATE_FRACTION ; [update_fraction, exponent, excess, count]
-    swap1                  ; [exponent, update_fraction, excess, count]
-    push MIN_FEE           ; [min_fee, exponent, update_fraction, excess, count]
+compute_user_fee:          ; [excess]
+    ;; Compute the fee using the fake exponential.
+    push FEE_UPDATE_FRACTION ; [update_fraction, excess]
+    swap1                  ; [excess, update_fraction]
+    push MIN_FEE           ; [min_fee, excess, update_fraction]
 
 #include "../common/fake_expo.eas"
 
+    jump @check_input      ; [req_fee]
+
+pre_fork_fee:              ; [excess]
+    pop                    ; []
+    push PRE_FORK_FEE      ; [req_fee]
+
+check_input:               ; [req_fee]
     ;; If calldatasize matches the expected request size, add the request.
-    calldatasize           ; [calldatasize, req_fee, excess, count]
-    push REQUEST_SIZE      ; [REQUEST_SIZE, calldatasize, req_fee, excess, count]
-    eq                     ; [REQUEST_SIZE == calldatasize, req_fee, excess, count]
-    jumpi @handle_input    ; [req_fee, excess, count]
+    calldatasize           ; [calldatasize, req_fee]
+    push REQUEST_SIZE      ; [REQUEST_SIZE, calldatasize, req_fee]
+    eq                     ; [REQUEST_SIZE == calldatasize, req_fee]
+    jumpi @handle_input    ; [req_fee]
 
     ;; Otherwise calldatasize must be zero (fee getter).
-    calldatasize           ; [calldatasize, req_fee, excess, count]
-    jumpi @revert          ; [req_fee, excess, count]
+    calldatasize           ; [calldatasize, req_fee]
+    jumpi @revert          ; [req_fee]
 
     ;; Reject any value on the read path to prevent lost funds.
-    callvalue              ; [value, req_fee, excess, count]
-    jumpi @revert          ; [req_fee, excess, count]
+    callvalue              ; [value, req_fee]
+    jumpi @revert          ; [req_fee]
 
     ;; Return req_fee.
-    push 0                 ; [0, req_fee, excess, count]
-    mstore                 ; [excess, count]
+    push 0                 ; [0, req_fee]
+    mstore                 ; []
     push 32                ; [32]
     push 0                 ; [0, 32]
     return                 ; []
@@ -190,16 +165,9 @@ handle_input:
     ;;      48        64      2404
 
     ;; Check that the value covers the fee.
-    callvalue              ; [callvalue, req_fee, excess, count]
-    lt                     ; [callvalue < req_fee, excess, count]
-    jumpi @revert          ; [excess, count]
-
-    ;; Enforce the per-block limit on added requests.
-    push MAX_ADDS_PER_BLOCK ; [max_adds, excess, count]
-    dup3                   ; [count, max_adds, excess, count]
-    lt                     ; [count < max_adds, excess, count]
-    iszero                 ; [count >= max_adds, excess, count]
-    jumpi @revert          ; [excess, count]
+    callvalue              ; [callvalue, req_fee]
+    lt                     ; [callvalue < req_fee]
+    jumpi @revert          ; []
 
     ;; Check the proof of possession before anything is written. The verifier's
     ;; input is the request without pq_data[32:64], which the proof does not
@@ -209,49 +177,47 @@ handle_input:
     ;;  | pubkey | pq_data[0:32] | proof |
     ;;  +--------+---------------+-------+
     ;;      48          32          2404
-    push SIGNED_SIZE       ; [size, excess, count]
-    push 0                 ; [ost, size, excess, count]
-    push 0                 ; [dest, ost, size, excess, count]
-    calldatacopy           ; [excess, count]
-    push PROOF_SIZE        ; [size, excess, count]
-    push INPUT_SIZE        ; [ost, size, excess, count]
-    push SIGNED_SIZE       ; [dest, ost, size, excess, count]
-    calldatacopy           ; [excess, count]
+    push SIGNED_SIZE       ; [size]
+    push 0                 ; [ost, size]
+    push 0                 ; [dest, ost, size]
+    calldatacopy           ; []
+    push PROOF_SIZE        ; [size]
+    push INPUT_SIZE        ; [ost, size]
+    push SIGNED_SIZE       ; [dest, ost, size]
+    calldatacopy           ; []
 
-    push 32                ; [ret_size, excess, count]
-    push 0                 ; [ret_ost, ret_size, excess, count]
-    push VERIFIER_INPUT_SIZE ; [in_size, ret_ost, ret_size, excess, count]
-    push 0                 ; [in_ost, in_size, ret_ost, ret_size, excess, count]
-    push VERIFIER          ; [verifier, in_ost, in_size, ret_ost, ret_size, excess, count]
-    gas                    ; [gas, verifier, in_ost, in_size, ret_ost, ret_size, excess, count]
-    staticcall             ; [success, excess, count]
-    iszero                 ; [!success, excess, count]
-    jumpi @revert          ; [excess, count]
+    push 32                ; [ret_size]
+    push 0                 ; [ret_ost, ret_size]
+    push VERIFIER_INPUT_SIZE ; [in_size, ret_ost, ret_size]
+    push 0                 ; [in_ost, in_size, ret_ost, ret_size]
+    push VERIFIER          ; [verifier, in_ost, in_size, ret_ost, ret_size]
+    gas                    ; [gas, verifier, in_ost, in_size, ret_ost, ret_size]
+    staticcall             ; [success]
+    iszero                 ; [!success]
+    jumpi @revert          ; []
 
     ;; The proof is valid only if the verifier returned the 32-byte word 1. The
     ;; size is checked because a call to an address without code succeeds and
     ;; returns nothing, which leaves the start of the public key at memory 0.
-    returndatasize         ; [returndatasize, excess, count]
-    push 32                ; [32, returndatasize, excess, count]
-    eq                     ; [32 == returndatasize, excess, count]
-    iszero                 ; [32 != returndatasize, excess, count]
-    jumpi @revert          ; [excess, count]
-    push 0                 ; [0, excess, count]
-    mload                  ; [result, excess, count]
-    push 1                 ; [1, result, excess, count]
-    eq                     ; [1 == result, excess, count]
-    iszero                 ; [1 != result, excess, count]
-    jumpi @revert          ; [excess, count]
+    returndatasize         ; [returndatasize]
+    push 32                ; [32, returndatasize]
+    eq                     ; [32 == returndatasize]
+    iszero                 ; [32 != returndatasize]
+    jumpi @revert          ; []
+    push 0                 ; [0]
+    mload                  ; [result]
+    push 1                 ; [1, result]
+    eq                     ; [1 == result]
+    iszero                 ; [1 != result]
+    jumpi @revert          ; []
 
-    ;; Persist the fee state: excess, count+1 and the current block number.
-    push SLOT_EXCESS       ; [excess_slot, excess, count]
-    sstore                 ; [count]
+    ;; The request pays the fee and its proof is valid, so increment the
+    ;; request count.
+    push SLOT_COUNT        ; [count_slot]
+    sload                  ; [count]
     push 1                 ; [1, count]
     add                    ; [count+1]
     push SLOT_COUNT        ; [count_slot, count+1]
-    sstore                 ; []
-    number                 ; [number]
-    push SLOT_LAST_BLOCK   ; [last_slot, number]
     sstore                 ; []
 
     ;; Compute the base storage slot of the new queue item.
@@ -342,7 +308,7 @@ handle_input:
 ;;;  +------+--------+---------+
 ;;;     20      48        64
 ;;;
-;;; Then handle the excess inhibitor.
+;;; Then update the excess and reset the request count.
 
 read_requests:
     ;; count = tail - head
@@ -468,34 +434,62 @@ reset_queue:
     sstore                 ; [count]
 
 update_excess:
-    ;; The fee state is maintained by the write path. The system call only
-    ;; manages the inhibitor: any calldata disables the queue, and a call with
-    ;; empty calldata re-enables a disabled queue.
+    ;; If the system call receives any input, disable the queue by storing
+    ;; INHIBITOR into the excess slot.
     calldatasize           ; [calldatasize, count]
     jumpi @set_inhibitor   ; [count]
 
+    ;; Load the current excess and the count of requests added in this block.
     push SLOT_EXCESS       ; [excess_slot, count]
     sload                  ; [excess, count]
-    push EXCESS_INHIBITOR  ; [inhibitor, excess, count]
-    eq                     ; [inhibitor == excess, count]
-    iszero                 ; [inhibitor != excess, count]
-    jumpi @return_records  ; [count]
+    push SLOT_COUNT        ; [count_slot, excess, count]
+    sload                  ; [added_count, excess, count]
 
-    ;; Re-enable the queue with a fresh fee state.
+    ;; If the excess slot holds PRE_FORK or INHIBITOR, start from a zero excess.
+    ;; This is the first system call, or the one that re-enables the queue. The
+    ;; requests counted before the first system call paid the fixed fee, so
+    ;; they don't add to the excess.
+    dup2                   ; [excess, added_count, excess, count]
+    push PRE_FORK          ; [pre_fork, excess, added_count, excess, count]
+    gt                     ; [pre_fork > excess, added_count, excess, count]
+    iszero                 ; [excess >= pre_fork, added_count, excess, count]
+    jumpi @zero_excess     ; [added_count, excess, count]
+
+    ;; If the sum of the previous excess and the requests added in this block
+    ;; is greater than the target, the new excess is that sum minus the target.
+    push TARGET_PER_BLOCK  ; [target, added_count, excess, count]
+    dup3                   ; [excess, target, added_count, excess, count]
+    dup3                   ; [added_count, excess, target, added_count, excess, count]
+    add                    ; [added_count+excess, target, added_count, excess, count]
+    gt                     ; [added_count+excess > target, added_count, excess, count]
+    jumpi @compute_excess  ; [added_count, excess, count]
+
+    ;; Zero out excess.
+zero_excess:               ; [added_count, excess, count]
+    pop                    ; [excess, count]
+    pop                    ; [count]
     push 0                 ; [0, count]
-    push SLOT_EXCESS       ; [excess_slot, 0, count]
+    jump @store_excess     ; [0, count]
+
+compute_excess:            ; [added_count, excess, count]
+    add                    ; [added_count+excess, count]
+    push TARGET_PER_BLOCK  ; [target, added_count+excess, count]
+    swap1                  ; [added_count+excess, target, count]
+    sub                    ; [new_excess, count]
+    jump @store_excess     ; [new_excess, count]
+
+set_inhibitor:             ; [count]
+    push INHIBITOR         ; [new_excess, count]
+
+store_excess:              ; [new_excess, count]
+    push SLOT_EXCESS       ; [excess_slot, new_excess, count]
     sstore                 ; [count]
+
+    ;; Reset the request count.
     push 0                 ; [0, count]
     push SLOT_COUNT        ; [count_slot, 0, count]
     sstore                 ; [count]
-    jump @return_records   ; [count]
 
-set_inhibitor:             ; [count]
-    push EXCESS_INHIBITOR  ; [inhibitor, count]
-    push SLOT_EXCESS       ; [excess_slot, inhibitor, count]
-    sstore                 ; [count]
-
-return_records:            ; [count]
     ;; Return count * RECORD_SIZE bytes.
     push RECORD_SIZE       ; [record_size, count]
     mul                    ; [size]

@@ -57,10 +57,11 @@ tests.
 
 ## The EIP-8483 verifier
 
-The EIP-8483 contracts, `pq_registrations` and `pq_builder_registrations`, take
-a leanXMSS signature with every request. They don't verify it in geas. They call
-a verifier written in Solidity, which lives in [leanxmss-evm-verifier][lxev] and
-is built there with pinned compiler settings.
+The EIP-8483 contracts, `pq_validator_registrations` and
+`pq_builder_registrations`, take a leanXMSS signature with every request. They
+don't verify it in geas. They call a verifier written in Solidity, which lives
+in [leanxmss-evm-verifier][lxev] and is built there with pinned compiler
+settings.
 
 The tests need the verifier's bytecode, so it is committed in
 `test/vectors/pq_proof_of_possession/` with the commit it was built from and the

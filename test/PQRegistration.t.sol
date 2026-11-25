@@ -7,9 +7,12 @@ import {Vm} from "forge-std/Vm.sol";
 // The address the registration contracts call to check a proof of possession.
 address constant verifier = 0x848300000000000000000000000000000000fFfF;
 
-uint256 constant last_block_slot = 4;
-uint256 constant pq_queue_storage_offset = 5;
-uint256 constant inhibitor = uint256(bytes32(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff));
+// The two values of the excess slot that aren't an excess. With the inhibitor
+// the queue is disabled. With the pre-fork value, which the constructor
+// stores, no system call was made yet and a request pays the fixed fee.
+uint256 constant inhibitor = type(uint256).max;
+uint256 constant pre_fork = type(uint256).max - 1;
+uint256 constant pre_fork_fee = 0.0005 ether;
 
 uint256 constant pubkey_size = 48;
 uint256 constant signed_size = 80; // pubkey ++ xmss_pubkey
@@ -25,6 +28,10 @@ string constant vectors_dir = "test/vectors/pq_proof_of_possession/";
 // The verifier is the Solidity contract from leanxmss-evm-verifier, and the
 // requests carry the proofs of possession generated there. Both are copied
 // into test/vectors/pq_proof_of_possession/ by scripts/pq_verifier.sh.
+//
+// setUp puts the runtime code at addr with empty storage, which is the state
+// after the first system call: a zero excess and the dynamic fee. The tests of
+// the fixed fee start with beforeFork.
 abstract contract PQRegistrationTest is Test {
   // The requests of the three valid proofs.
   bytes[3] requests;
@@ -51,7 +58,6 @@ abstract contract PQRegistrationTest is Test {
   function bytecodeDir() internal pure virtual returns (string memory);
   function pqDataSize() internal pure virtual returns (uint256);
   function targetPerBlock() internal pure virtual returns (uint256);
-  function maxAddsPerBlock() internal pure virtual returns (uint256);
   function maxPerBlock() internal pure virtual returns (uint256);
 
   function inputSize() internal pure returns (uint256) {
@@ -111,24 +117,37 @@ abstract contract PQRegistrationTest is Test {
   // testRequest verifies a single request is accepted, logged and read
   // successfully, and that the proof is neither stored nor logged.
   function testRequest() public {
+    checkRequest(1);
+  }
+
+  // testRequestBeforeFork verifies the same for a request added before the
+  // first system call, which pays the fixed fee.
+  function testRequestBeforeFork() public {
+    beforeFork();
+    checkRequest(pre_fork_fee);
+  }
+
+  // checkRequest adds a request that pays the given fee and reads it with a
+  // system call.
+  function checkRequest(uint256 fee) internal {
     bytes memory req = makeRequest(1);
     bytes memory record = makeRecord(address(this), req);
     assertEq(record.length, recordSize());
+    uint256 excess = load(excess_slot);
 
     vm.expectEmitAnonymous(false, false, false, false, true);
     assembly {
       log0(add(record, 32), mload(record))
     }
 
-    addRequest(address(this), req, 1);
-    assertStorage(excess_slot, 0, "unexpected excess");
+    addRequest(address(this), req, fee);
+    assertStorage(excess_slot, excess, "a request changed the excess slot");
     assertStorage(count_slot, 1, "unexpected request count");
-    assertStorage(last_block_slot, block.number, "unexpected last block");
-    assertEq(addr.balance, 1, "the contract keeps the fee");
+    assertEq(addr.balance, fee, "the contract keeps the fee");
 
     // Nothing is written past the request's slots. The first 16 bytes of the
     // proof would otherwise be in the last slot, and the rest after it.
-    uint256 last = pq_queue_storage_offset + slotsPerItem() - 1;
+    uint256 last = queue_storage_offset + slotsPerItem() - 1;
     assertEq(load(last) & type(uint128).max, 0, "proof bytes in the last slot");
     assertStorage(last + 1, 0, "unexpected write past the request");
 
@@ -136,6 +155,8 @@ abstract contract PQRegistrationTest is Test {
     assertEq(out, record, "unexpected record");
     assertStorage(queue_head_slot, 0, "expected queue head reset");
     assertStorage(queue_tail_slot, 0, "expected queue tail reset");
+    assertStorage(count_slot, 0, "expected request count reset");
+    assertExcess(0);
   }
 
   // testRequestRecordsCaller verifies the recorded source_address is the
@@ -156,7 +177,7 @@ abstract contract PQRegistrationTest is Test {
     assertEq(addr.balance, 5);
   }
 
-  // testRequestWrites checks that a request writes only the fee state, the
+  // testRequestWrites checks that a request writes only the request count, the
   // queue tail and its own slots, and that the contract logs only the record.
   function testRequestWrites() public {
     for (uint256 i = 0; i < 3; i++) {
@@ -166,11 +187,11 @@ abstract contract PQRegistrationTest is Test {
       (bool ret,) = addr.call{value: 1}(req);
       assertEq(ret, true, "expected call to succeed");
 
-      uint256 first = pq_queue_storage_offset + i*slotsPerItem();
+      uint256 first = queue_storage_offset + i*slotsPerItem();
       (, bytes32[] memory writes) = vm.accesses(addr);
       for (uint256 w = 0; w < writes.length; w++) {
         uint256 slot = uint256(writes[w]);
-        bool header = slot == excess_slot || slot == count_slot || slot == queue_tail_slot || slot == last_block_slot;
+        bool header = slot == count_slot || slot == queue_tail_slot;
         assertTrue(header || (slot >= first && slot < first + slotsPerItem()), "unexpected slot written");
       }
 
@@ -352,124 +373,72 @@ abstract contract PQRegistrationTest is Test {
   }
 
   // --------------------------------------------------------------------------
-  // fee ----------------------------------------------------------------------
+  // fee before the fork ------------------------------------------------------
   // --------------------------------------------------------------------------
 
   // testDeployment checks that the constructor deploys the runtime code and
-  // writes no storage, so the contract takes requests as soon as it is
-  // deployed.
+  // stores only the pre-fork value, in the excess slot. The contract then
+  // takes requests for the fixed fee as soon as it is deployed.
   function testDeployment() public {
     address deployed = deploy(readHex(string.concat("bytecode/", bytecodeDir(), "/ctor.hex")));
     assertEq(deployed.code, addr.code);
-    for (uint256 slot = 0; slot < pq_queue_storage_offset; slot++) {
-      assertEq(vm.load(deployed, bytes32(slot)), bytes32(0), "expected no storage written");
+    assertEq(vm.load(deployed, bytes32(excess_slot)), bytes32(pre_fork), "expected the pre-fork value in the excess slot");
+    for (uint256 slot = 1; slot < queue_storage_offset + slotsPerItem(); slot++) {
+      assertEq(vm.load(deployed, bytes32(slot)), bytes32(0), "expected no other storage written");
     }
 
     (bool ret, bytes memory data) = deployed.call("");
     assertEq(ret, true);
-    assertEq(uint256(bytes32(data)), 1, "unexpected fee");
-    (ret,) = deployed.call{value: 1}(makeRequest(0));
+    assertEq(uint256(bytes32(data)), pre_fork_fee, "unexpected fee");
+    (ret,) = deployed.call{value: pre_fork_fee - 1}(makeRequest(0));
+    assertEq(ret, false, "expected request to fail");
+    (ret,) = deployed.call{value: pre_fork_fee}(makeRequest(0));
     assertEq(ret, true, "expected request to succeed");
   }
 
-  // testFeeGetterRejectsValue verifies the empty-calldata fee getter reverts
-  // when value is attached, preventing accidentally lost funds.
-  function testFeeGetterRejectsValue() public {
-    vm.deal(address(this), 1);
+  // testFeeBeforeFork checks that a request pays the fixed fee until the first
+  // system call, however many requests are added and whatever the block.
+  function testFeeBeforeFork() public {
+    beforeFork();
+
+    // More requests than the target in one block don't raise the fee.
+    uint256 count = targetPerBlock() + 20;
+    for (uint256 i = 0; i < count; i++) {
+      assertEq(getCurrentFee(), pre_fork_fee, "unexpected fee");
+      addFailedRequest(sender(i), makeRequest(i), pre_fork_fee - 1);
+      addRequest(sender(i), makeRequest(i), pre_fork_fee);
+    }
+
+    // Blocks without requests don't lower it.
+    vm.roll(block.number + 1000);
+    assertEq(getCurrentFee(), pre_fork_fee, "unexpected fee");
+    addFailedRequest(sender(count), makeRequest(count), pre_fork_fee - 1);
+    addRequest(sender(count), makeRequest(count), pre_fork_fee);
+    count++;
+
+    assertStorage(excess_slot, pre_fork, "a request changed the excess slot");
+    assertStorage(count_slot, count, "unexpected request count");
+    assertStorage(queue_tail_slot, count, "unexpected tail");
+    assertEq(addr.balance, count * pre_fork_fee, "the contract keeps the fees");
+
+    // The fee getter rejects value before the fork too.
     (bool ret,) = addr.call{value: 1}("");
     assertEq(ret, false, "fee getter must reject callvalue");
   }
 
-  // testFeePerTx checks how fees are computed within a single block, and that
-  // no more than the maximum can be added in it.
-  function testFeePerTx() public {
-    for (uint256 i = 0; i < maxAddsPerBlock(); i++) {
-      uint256 fee = getCurrentFee();
-      if (i <= targetPerBlock()) {
-        assertEq(fee, 1, "unexpected fee for request below target");
-      } else {
-        assertEq(fee, computeFee(i - targetPerBlock()), "unexpected fee");
-        addFailedRequest(sender(i), makeRequest(i), fee-1);
-      }
-      addRequest(sender(i), makeRequest(i), fee);
-    }
-    assertStorage(count_slot, maxAddsPerBlock(), "unexpected request count");
-    assertStorage(excess_slot, 0, "the excess is updated by the first request of a block");
-
-    // The block is full.
-    addFailedRequest(sender(0), makeRequest(0), 1 ether);
-
-    // The next block takes requests again.
-    vm.roll(block.number + 1);
-    addRequest(sender(0), makeRequest(0), getCurrentFee());
-  }
-
-  // testFeeDecay checks that the excess decays by the target for every block
-  // without requests, with no system call.
-  function testFeeDecay() public {
-    fillBlock(0);
-    uint256 added = maxAddsPerBlock();
-
-    uint256 excess = added;
-    for (uint256 elapsed = 1; excess > 0; elapsed++) {
-      vm.roll(block.number + 1);
-      uint256 decay = elapsed * targetPerBlock();
-      excess = added > decay ? added - decay : 0;
-      assertEq(getCurrentFee(), computeFee(excess), "unexpected fee");
-    }
-
-    // The fee getter doesn't write. The first request of a block stores the
-    // decayed excess, and counts as the first of its block.
-    assertStorage(excess_slot, 0, "unexpected excess before the request");
-    assertStorage(count_slot, added, "unexpected request count before the request");
-    addRequest(sender(0), makeRequest(0), 1);
-    assertStorage(excess_slot, 0, "unexpected excess");
-    assertStorage(count_slot, 1, "unexpected request count");
-    assertStorage(last_block_slot, block.number, "unexpected last block");
-  }
-
-  // testFeeAcrossBlocks checks that the requests of a block above the target
-  // carry over to the next block as excess.
-  function testFeeAcrossBlocks() public {
-    fillBlock(0);
-    vm.roll(block.number + 1);
-
-    uint256 excess = maxAddsPerBlock() - targetPerBlock();
-    for (uint256 i = 0; i < maxAddsPerBlock(); i++) {
-      uint256 fee = getCurrentFee();
-      uint256 above = i > targetPerBlock() ? i - targetPerBlock() : 0;
-      assertEq(fee, computeFee(excess + above), "unexpected fee");
-      addFailedRequest(sender(i), makeRequest(i), fee-1);
-      addRequest(sender(i), makeRequest(i), fee);
-      assertStorage(excess_slot, excess, "unexpected excess");
-    }
-
-    vm.roll(block.number + 1);
-    assertEq(getCurrentFee(), computeFee(2 * excess), "unexpected fee");
-  }
-
-  // --------------------------------------------------------------------------
-  // queue and system call ----------------------------------------------------
-  // --------------------------------------------------------------------------
-
-  // testQueueBeforeFork adds requests for several blocks with no system call,
-  // as before the fork that starts it. The fee stays at the minimum at the
-  // target rate, and the first system calls then return the requests in order,
-  // the maximum per block at a time.
-  function testQueueBeforeFork() public {
-    uint256 blocks = maxPerBlock() / targetPerBlock() + 1;
-    uint256 count = 0;
-    for (uint256 b = 0; b < blocks; b++) {
-      for (uint256 i = 0; i < targetPerBlock(); i++) {
-        assertEq(getCurrentFee(), 1, "unexpected fee at the target rate");
-        addRequest(sender(count), makeRequest(count), 1);
-        count++;
-      }
-      vm.roll(block.number + 1);
+  // testFirstSystemCall queues more requests than a block takes with no system
+  // call, as before the fork that starts it. The first system call returns the
+  // maximum per block, in order, and starts the dynamic fee from a zero excess:
+  // the requests added before it don't count.
+  function testFirstSystemCall() public {
+    beforeFork();
+    uint256 count = maxPerBlock() + targetPerBlock() + 1;
+    for (uint256 i = 0; i < count; i++) {
+      addRequest(sender(i), makeRequest(i), pre_fork_fee);
     }
     assertStorage(queue_head_slot, 0, "unexpected head");
     assertStorage(queue_tail_slot, count, "unexpected tail");
-    assertStorage(excess_slot, 0, "unexpected excess");
+    assertStorage(count_slot, count, "unexpected request count");
 
     // The first system call reads a full block from cold storage, within its
     // gas limit.
@@ -482,43 +451,130 @@ abstract contract PQRegistrationTest is Test {
     assertStorage(queue_head_slot, maxPerBlock(), "unexpected head");
     assertStorage(queue_tail_slot, count, "unexpected tail");
 
-    // The system call leaves the fee state alone.
-    assertStorage(excess_slot, 0, "unexpected excess");
-    assertStorage(count_slot, targetPerBlock(), "unexpected request count");
-    assertStorage(last_block_slot, block.number - 1, "unexpected last block");
+    // The requests added before the fork are more than the target, and they
+    // leave no excess.
+    assertExcess(0);
+    assertStorage(count_slot, 0, "expected request count reset");
 
-    // The second one reads the rest and resets the queue.
-    checkRecords(getRequests(), maxPerBlock(), count - maxPerBlock());
+    // A request now pays the minimum fee, while the queue is still draining.
+    addRequest(sender(count), makeRequest(count), 1);
+
+    // The second system call reads the rest and resets the queue.
+    checkRecords(getRequests(), maxPerBlock(), count + 1 - maxPerBlock());
     assertStorage(queue_head_slot, 0, "expected queue head reset");
     assertStorage(queue_tail_slot, 0, "expected queue tail reset");
     assertEq(getRequests().length, 0, "expected an empty queue");
 
     // New requests go to the start of the queue again.
-    addRequest(sender(count), makeRequest(count), 1);
-    checkRecords(getRequests(), count, 1);
+    addRequest(sender(count + 1), makeRequest(count + 1), 1);
+    checkRecords(getRequests(), count + 1, 1);
   }
 
-  // testSystemCallWithInput verifies that a system call with input drains the
-  // queue and sets the inhibitor to prevent further additions, and that a
-  // system call with no input re-enables the queue with a fresh fee state.
-  function testSystemCallWithInput() public {
-    fillBlock(0);
-    vm.roll(block.number + 1);
-    addRequest(sender(0), makeRequest(0), getCurrentFee());
-    assertGt(load(excess_slot), 0, "expected some excess");
+  // --------------------------------------------------------------------------
+  // fee after the fork -------------------------------------------------------
+  // --------------------------------------------------------------------------
 
+  // testFeeGetterRejectsValue verifies the empty-calldata fee getter reverts
+  // when value is attached, preventing accidentally lost funds.
+  function testFeeGetterRejectsValue() public {
+    vm.deal(address(this), 1);
+    (bool ret,) = addr.call{value: 1}("");
+    assertEq(ret, false, "fee getter must reject callvalue");
+  }
+
+  // testFeePerTx checks how fees are computed within a single block. The
+  // requests above the target raise the fee before the system call adds them
+  // to the excess.
+  function testFeePerTx() public {
+    uint256 count = targetPerBlock() + 40;
+    for (uint256 i = 0; i < count; i++) {
+      uint256 fee = getCurrentFee();
+      if (i <= targetPerBlock()) {
+        assertEq(fee, 1, "unexpected fee for request below target");
+      } else {
+        assertEq(fee, computeFee(i - targetPerBlock()), "unexpected fee");
+      }
+      addFailedRequest(sender(i), makeRequest(i), fee-1);
+      addRequest(sender(i), makeRequest(i), fee);
+    }
+    assertStorage(count_slot, count, "unexpected request count");
+    assertStorage(excess_slot, 0, "only the system call updates the excess");
+  }
+
+  // testFeeAcrossBlocks checks that the system call carries the requests of a
+  // block above the target over to the next blocks as excess, and that the
+  // excess decays by the target in every block without requests.
+  function testFeeAcrossBlocks() public {
+    uint256 count = 3*targetPerBlock() + 1;
+    for (uint256 i = 0; i < count; i++) {
+      addRequest(sender(i), makeRequest(i), getCurrentFee());
+    }
+    checkRecords(getRequests(), 0, count);
+
+    uint256 excess = count - targetPerBlock();
+    assertExcess(excess);
+    assertStorage(count_slot, 0, "expected request count reset");
+
+    // The excess sets the fee of the next block.
+    uint256 fee = computeFee(excess);
+    addFailedRequest(sender(count), makeRequest(count), fee-1);
+    addRequest(sender(count), makeRequest(count), fee);
+
+    // That block has one request, so the excess decays by the target minus
+    // one. Then it decays by the target in every block without requests.
+    getRequests();
+    excess = excess + 1 - targetPerBlock();
+    assertExcess(excess);
+    while (excess > 0) {
+      getRequests();
+      excess = excess > targetPerBlock() ? excess - targetPerBlock() : 0;
+      assertExcess(excess);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // disabling the queue ------------------------------------------------------
+  // --------------------------------------------------------------------------
+
+  // testSystemCallWithInput verifies that a system call with input drains the
+  // queue and stores the inhibitor to prevent further additions, and that a
+  // system call with no input re-enables the queue with a zero excess.
+  function testSystemCallWithInput() public {
+    uint256 count = targetPerBlock() + 2;
+    for (uint256 i = 0; i < count; i++) {
+      addRequest(sender(i), makeRequest(i), getCurrentFee());
+    }
+    disableAndEnable(count);
+  }
+
+  // testSystemCallWithInputBeforeFork verifies the same when the system call
+  // with input is the first one. Re-enabling the queue then starts the dynamic
+  // fee, and the fixed fee doesn't come back.
+  function testSystemCallWithInputBeforeFork() public {
+    beforeFork();
+    uint256 count = targetPerBlock() + 2;
+    for (uint256 i = 0; i < count; i++) {
+      addRequest(sender(i), makeRequest(i), pre_fork_fee);
+    }
+    disableAndEnable(count);
+  }
+
+  // disableAndEnable disables the queue, which holds the given count of
+  // requests, checks that it takes no requests, and enables it again.
+  function disableAndEnable(uint256 queued) internal {
     // Disable the queue with a system call that carries input data.
     vm.prank(sysaddr);
     (bool ret, bytes memory data) = addr.call(hex"01");
     assertEq(ret, true);
-    assertEq(data.length, min(maxAddsPerBlock() + 1, maxPerBlock()) * recordSize(), "system call should drain the queue");
+    assertEq(data.length, queued * recordSize(), "system call should drain the queue");
     assertStorage(excess_slot, inhibitor, "expected inhibitor in excess storage slot");
+    assertStorage(count_slot, 0, "expected request count reset");
 
     // Check that requesting the current fee fails.
     (ret,) = addr.staticcall("");
     assertEq(ret, false, "expected fee getter to fail");
 
-    // Check that adding a request fails.
+    // Check that adding a request fails, whatever it pays.
     addFailedRequest(address(this), makeRequest(1), 1 ether);
 
     // A system call with input keeps the queue disabled.
@@ -529,11 +585,10 @@ abstract contract PQRegistrationTest is Test {
 
     // Now re-enable the queue through a system call with no input.
     getRequests();
-    assertStorage(excess_slot, 0, "expected zero excess requests after re-enabling queue");
+    assertExcess(0);
     assertStorage(count_slot, 0, "expected zero request count after re-enabling queue");
 
     // Check that adding a request succeeds again with fee 1.
-    assertEq(getCurrentFee(), 1, "unexpected fee");
     addRequest(address(this), makeRequest(2), 1);
   }
 
@@ -542,33 +597,38 @@ abstract contract PQRegistrationTest is Test {
   // --------------------------------------------------------------------------
   //
   // These tests set the storage directly and compare the contract with the
-  // rules of EIP-8483, which expectedFeeState and the tests state again.
+  // rules that expectedFee and the tests state again.
 
-  // testFuzzFee checks the fee getter from any fee state.
-  function testFuzzFee(uint256 excess, uint256 count, uint256 elapsed, uint256 number) public {
-    setFeeState(excess, count, elapsed, number);
-    (,, uint256 fee) = expectedFeeState();
-    assertEq(getCurrentFee(), fee, "unexpected fee");
+  // testFuzzFee checks the fee getter from any fee state. It fails only when
+  // the queue is disabled.
+  function testFuzzFee(uint256 excess, uint256 count) public {
+    setFeeState(excess, count);
+    (bool open, uint256 fee) = expectedFee();
+    (bool ret, bytes memory data) = addr.staticcall("");
+    assertEq(ret, open, "unexpected result");
+    if (open) {
+      assertEq(uint256(bytes32(data)), fee, "unexpected fee");
+    }
   }
 
   // testFuzzAdd adds a request from any fee state and queue tail, from any
-  // sender and with any value. The request is accepted if it pays the fee and
-  // the block isn't full, and then it stores the fee state of the current
-  // block. A rejected request changes nothing.
-  function testFuzzAdd(uint256 excess, uint256 count, uint256 elapsed, uint256 number, uint256 tail, address from, uint256 value, uint256 x) public {
+  // sender and with any value. The request is accepted if the queue isn't
+  // disabled and it pays the fee, and then it adds one to the request count
+  // and to the tail, and nothing else. A rejected request changes nothing.
+  function testFuzzAdd(uint256 excess, uint256 count, uint256 tail, address from, uint256 value, uint256 x) public {
     // The system address would take the system call path, and the contract
     // can't be the sender because the test sets the sender's balance.
     vm.assume(from != sysaddr && from != addr);
-    setFeeState(excess, count, elapsed, number);
+    setFeeState(excess, count);
     tail = bound(tail, 0, type(uint64).max);
     vm.store(addr, bytes32(queue_tail_slot), bytes32(tail));
 
-    (uint256 newExcess, uint256 newCount, uint256 fee) = expectedFeeState();
-    value = bound(value, 0, 2*fee + 1);
-    bool accepted = value >= fee && newCount < maxAddsPerBlock();
+    (bool open, uint256 fee) = expectedFee();
+    value = bound(value, 0, open ? 2*fee + 1 : 1 ether);
+    bool accepted = open && value >= fee;
 
-    uint256[5] memory header;
-    for (uint256 slot = 0; slot < pq_queue_storage_offset; slot++) {
+    uint256[4] memory header;
+    for (uint256 slot = 0; slot < queue_storage_offset; slot++) {
       header[slot] = load(slot);
     }
     bytes memory req = makeRequest(x);
@@ -578,15 +638,14 @@ abstract contract PQRegistrationTest is Test {
     assertEq(ret, accepted, "unexpected result");
 
     if (!accepted) {
-      for (uint256 slot = 0; slot < pq_queue_storage_offset; slot++) {
+      for (uint256 slot = 0; slot < queue_storage_offset; slot++) {
         assertStorage(slot, header[slot], "a rejected request changed the storage");
       }
       assertEq(addr.balance, 0, "a rejected request paid");
       return;
     }
-    assertStorage(excess_slot, newExcess, "unexpected excess");
-    assertStorage(count_slot, newCount+1, "unexpected request count");
-    assertStorage(last_block_slot, block.number, "unexpected last block");
+    assertStorage(excess_slot, header[excess_slot], "a request changed the excess slot");
+    assertStorage(count_slot, header[count_slot]+1, "unexpected request count");
     assertStorage(queue_head_slot, header[queue_head_slot], "unexpected head");
     assertStorage(queue_tail_slot, tail+1, "unexpected tail");
     assertQueued(tail, from, req);
@@ -596,19 +655,30 @@ abstract contract PQRegistrationTest is Test {
   // testFuzzSystemCall runs the system call from any queue head, length and
   // contents, any fee state, and with or without input. It returns the
   // records of up to the maximum per block, in order, and moves the head, or
-  // resets the queue when it empties it. It doesn't touch the fee state,
-  // except for the inhibitor: input sets it, and no input clears it and
-  // starts the fee state again.
-  function testFuzzSystemCall(uint256 head, uint256 len, uint256 excess, uint256 count, uint256 last, bytes32 seed, bool inhibited, bool withInput) public {
+  // resets the queue when it empties it. It always resets the request count.
+  //
+  // Input stores the inhibitor. With no input, the excess starts from zero if
+  // the slot held the inhibitor or the pre-fork value. Otherwise the request
+  // count is added to it and the target taken off, down to zero.
+  function testFuzzSystemCall(uint256 head, uint256 len, uint256 excess, uint256 count, bytes32 seed, bool withInput) public {
     // Most queues are short, and some are longer than a block takes.
     head = bound(head, 0, type(uint64).max);
     len = bound(len, 0, len % 8 == 0 ? maxPerBlock() + 40 : 40);
-    excess = inhibited ? inhibitor : bound(excess, 0, type(uint64).max);
+    // One state in four is before the first system call, and one in eight has
+    // the queue disabled. In the others, most have an excess and a count
+    // around the target, so the excess is seen to grow, decay and reach zero.
+    if (excess % 4 == 0) {
+      excess = pre_fork;
+    } else if (excess % 8 == 1) {
+      excess = inhibitor;
+    } else {
+      excess = bound(excess, 0, excess % 3 == 0 ? type(uint64).max : 2*targetPerBlock());
+    }
+    count = bound(count, 0, count % 3 == 0 ? type(uint64).max : 2*targetPerBlock());
     vm.store(addr, bytes32(excess_slot), bytes32(excess));
     vm.store(addr, bytes32(count_slot), bytes32(count));
     vm.store(addr, bytes32(queue_head_slot), bytes32(head));
     vm.store(addr, bytes32(queue_tail_slot), bytes32(head + len));
-    vm.store(addr, bytes32(last_block_slot), bytes32(last));
 
     // Fill the items the call reads with any words, and build the records
     // they make: the low 20 bytes of the first slot, then the other slots up
@@ -616,7 +686,7 @@ abstract contract PQRegistrationTest is Test {
     uint256 n = min(len, maxPerBlock());
     bytes memory expected = new bytes(n*recordSize() + 32);
     for (uint256 i = 0; i < n; i++) {
-      uint256 idx = pq_queue_storage_offset + (head+i)*slotsPerItem();
+      uint256 idx = queue_storage_offset + (head+i)*slotsPerItem();
       uint256 ost = i*recordSize();
       for (uint256 k = 0; k < slotsPerItem(); k++) {
         uint256 word = uint256(keccak256(abi.encode(seed, i, k)));
@@ -651,64 +721,66 @@ abstract contract PQRegistrationTest is Test {
     }
     if (withInput) {
       assertStorage(excess_slot, inhibitor, "expected inhibitor in excess storage slot");
-      assertStorage(count_slot, count, "unexpected request count");
-    } else if (inhibited) {
-      assertStorage(excess_slot, 0, "expected zero excess after re-enabling queue");
-      assertStorage(count_slot, 0, "expected zero request count after re-enabling queue");
+    } else if (excess >= pre_fork) {
+      assertStorage(excess_slot, 0, "expected the excess to start from zero");
     } else {
-      assertStorage(excess_slot, excess, "the system call changed the excess");
-      assertStorage(count_slot, count, "the system call changed the request count");
+      assertStorage(excess_slot, excess + count > targetPerBlock() ? excess + count - targetPerBlock() : 0, "unexpected excess");
     }
-    assertStorage(last_block_slot, last, "the system call changed the last block");
+    assertStorage(count_slot, 0, "expected request count reset");
   }
 
   // --------------------------------------------------------------------------
   // helpers ------------------------------------------------------------------
   // --------------------------------------------------------------------------
 
-  // setFeeState sets the block number and the three slots of the fee state:
-  // the excess, the count of requests of the last block that had any, and
-  // that block's number, which is elapsed blocks before the current one.
-  function setFeeState(uint256 excess, uint256 count, uint256 elapsed, uint256 number) internal {
-    // The excess of a few full blocks decays to zero in about as many blocks
-    // as elapsed can be, so the tests see it decay partly and fully. One state
-    // in four is in the block of the last request, and one in four has that
-    // block full or one request short, so the limit per block is hit often.
-    excess = bound(excess, 0, 4*maxAddsPerBlock());
-    count = count % 4 == 0 ? maxAddsPerBlock() - (count / 4) % 2 : bound(count, 0, maxAddsPerBlock());
-    elapsed = elapsed % 4 == 1 ? 0 : bound(elapsed, 0, 6*maxAddsPerBlock()/targetPerBlock());
-    number = bound(number, elapsed, type(uint64).max);
-    vm.roll(number);
-    vm.store(addr, bytes32(excess_slot), bytes32(excess));
-    vm.store(addr, bytes32(count_slot), bytes32(count));
-    vm.store(addr, bytes32(last_block_slot), bytes32(number - elapsed));
+  // beforeFork puts the contract in the state its constructor leaves it in,
+  // where no system call was made yet.
+  function beforeFork() internal {
+    vm.store(addr, bytes32(excess_slot), bytes32(pre_fork));
   }
 
-  // expectedFeeState computes, from the fee state in storage, what EIP-8483
-  // specifies for the current block: the excess, the count of requests added
-  // in it, and the fee of the next request.
-  //
-  // If no request was added in this block yet, the count of the last block
-  // that had requests is added to the excess, which then decays by the target
-  // for every block since. The fee also counts the requests of this block
-  // above the target.
-  function expectedFeeState() internal returns (uint256 excess, uint256 count, uint256 fee) {
-    excess = load(excess_slot);
-    count = load(count_slot);
-    uint256 last = load(last_block_slot);
-    if (block.number != last) {
-      uint256 decay = targetPerBlock() * (block.number - last);
-      excess = excess + count > decay ? excess + count - decay : 0;
-      count = 0;
+  // setFeeState sets the excess slot and the request count. One state in four
+  // is before the first system call, and one in eight has the queue disabled.
+  // The count can be anything in those, since it doesn't set the fee. In the
+  // others, the excess and the count are small enough to compute the fee.
+  function setFeeState(uint256 excess, uint256 count) internal {
+    if (excess % 4 == 0) {
+      excess = pre_fork;
+      count = bound(count, 0, type(uint64).max);
+    } else if (excess % 8 == 1) {
+      excess = inhibitor;
+      count = bound(count, 0, type(uint64).max);
+    } else {
+      excess = bound(excess, 0, 600);
+      count = bound(count, 0, 2*targetPerBlock() + 40);
     }
-    fee = computeFee(count > targetPerBlock() ? excess + count - targetPerBlock() : excess);
+    vm.store(addr, bytes32(excess_slot), bytes32(excess));
+    vm.store(addr, bytes32(count_slot), bytes32(count));
+  }
+
+  // expectedFee computes, from the fee state in storage, whether the queue
+  // takes requests and the fee of the next one.
+  //
+  // The queue takes no requests while the excess slot holds the inhibitor.
+  // The fee is fixed while it holds the pre-fork value. Otherwise the fee
+  // grows with the excess plus the requests of this block above the target.
+  function expectedFee() internal returns (bool open, uint256 fee) {
+    uint256 excess = load(excess_slot);
+    if (excess == inhibitor) {
+      return (false, 0);
+    }
+    if (excess == pre_fork) {
+      return (true, pre_fork_fee);
+    }
+    uint256 count = load(count_slot);
+    return (true, computeFee(count > targetPerBlock() ? excess + count - targetPerBlock() : excess));
   }
 
   // addRequest submits a request to the system contract, expects it to succeed
   // and checks what it wrote.
   function addRequest(address from, bytes memory req, uint256 value) internal {
-    // Load the fee state and the tail index before adding the request.
-    uint256 count = load(last_block_slot) == block.number ? load(count_slot) : 0;
+    // Load the request count and the tail index before adding the request.
+    uint256 count = load(count_slot);
     uint256 tail = load(queue_tail_slot);
 
     // Send request from address.
@@ -717,9 +789,8 @@ abstract contract PQRegistrationTest is Test {
     (bool ret,) = addr.call{value: value}(req);
     assertEq(ret, true, "expected call to succeed");
 
-    // Verify the fee state and the queue data were updated correctly.
+    // Verify the request count and the queue data were updated correctly.
     assertStorage(count_slot, count+1, "unexpected request count");
-    assertStorage(last_block_slot, block.number, "unexpected last block");
     assertStorage(queue_tail_slot, tail+1, "unexpected tail slot");
 
     assertQueued(tail, from, req);
@@ -729,19 +800,11 @@ abstract contract PQRegistrationTest is Test {
   // the address, then the input in 32-byte words, the last one padded with
   // zeros.
   function assertQueued(uint256 index, address from, bytes memory req) internal view {
-    uint256 idx = pq_queue_storage_offset+index*slotsPerItem();
+    uint256 idx = queue_storage_offset+index*slotsPerItem();
     assertStorage(idx, uint256(uint160(from)), "addr not written to queue");
     for (uint256 k = 1; k < slotsPerItem(); k++) {
       uint256 start = (k-1)*32;
       assertStorage(idx+k, toFixed(req, start, min(start+32, inputSize())), "input not written to queue");
-    }
-  }
-
-  // fillBlock adds the maximum of requests that fit in the current block,
-  // starting at the given request index.
-  function fillBlock(uint256 start) internal {
-    for (uint256 i = start; i < start + maxAddsPerBlock(); i++) {
-      addRequest(sender(i), makeRequest(i), getCurrentFee());
     }
   }
 
@@ -846,7 +909,7 @@ abstract contract PQRegistrationTest is Test {
 
 contract PQValidatorRegistrationTest is PQRegistrationTest {
   function bytecodeDir() internal pure override returns (string memory) {
-    return "pq_registrations";
+    return "pq_validator_registrations";
   }
 
   function pqDataSize() internal pure override returns (uint256) {
@@ -855,10 +918,6 @@ contract PQValidatorRegistrationTest is PQRegistrationTest {
 
   function targetPerBlock() internal pure override returns (uint256) {
     return 128;
-  }
-
-  function maxAddsPerBlock() internal pure override returns (uint256) {
-    return 256;
   }
 
   function maxPerBlock() internal pure override returns (uint256) {
@@ -911,10 +970,6 @@ contract PQBuilderRegistrationTest is PQRegistrationTest {
 
   function targetPerBlock() internal pure override returns (uint256) {
     return 2;
-  }
-
-  function maxAddsPerBlock() internal pure override returns (uint256) {
-    return 16;
   }
 
   function maxPerBlock() internal pure override returns (uint256) {

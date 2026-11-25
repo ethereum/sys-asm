@@ -4,7 +4,7 @@
 #
 #     ./scripts/pq_verifier.sh <path to leanxmss-evm-verifier>
 #
-# The verifier is the Solidity contract that the pq_registrations and
+# The verifier is the Solidity contract that the pq_validator_registrations and
 # pq_builder_registrations contracts call. It is built there, with the compiler
 # settings pinned in its contracts/foundry.toml. This script writes its runtime
 # code (main.hex), its init code (ctor.hex), the proofs of possession the tests

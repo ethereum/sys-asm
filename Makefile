@@ -44,9 +44,9 @@ build: $(GEAS)
 	$(GEAS) -a -no-nl -o bytecode/recent_root/ctor.hex src/recent_root/ctor.eas
 
 	# 8483
-	mkdir -p bytecode/pq_registrations
-	$(GEAS) -a -no-nl -o bytecode/pq_registrations/main.hex src/pq_registrations/main.eas
-	$(GEAS) -a -no-nl -o bytecode/pq_registrations/ctor.hex src/pq_registrations/ctor.eas
+	mkdir -p bytecode/pq_validator_registrations
+	$(GEAS) -a -no-nl -o bytecode/pq_validator_registrations/main.hex src/pq_validator_registrations/main.eas
+	$(GEAS) -a -no-nl -o bytecode/pq_validator_registrations/ctor.hex src/pq_validator_registrations/ctor.eas
 	mkdir -p bytecode/pq_builder_registrations
 	$(GEAS) -a -no-nl -o bytecode/pq_builder_registrations/main.hex src/pq_builder_registrations/main.eas
 	$(GEAS) -a -no-nl -o bytecode/pq_builder_registrations/ctor.hex src/pq_builder_registrations/ctor.eas
