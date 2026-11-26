@@ -55,6 +55,25 @@ You can also use the `forge` tool directly, but be aware that tests rely on the
 bytecode created by `make build`, so you must recompile the contracts before running
 tests.
 
+## The EIP-8483 verifier
+
+The EIP-8483 contracts, `pq_validator_registrations` and
+`pq_builder_registrations`, take a leanXMSS signature with every request. They
+don't verify it in geas. They call a verifier written in Solidity, which lives
+in [leanxmss-evm-verifier][lxev] and is built there with pinned compiler
+settings.
+
+The tests need the verifier's bytecode, so it is committed in
+`test/vectors/pq_proof_of_possession/` with the commit it was built from and the
+signatures the tests use. To update it from a checkout of that repository, run:
+
+```console
+$ ./scripts/pq_verifier.sh ../leanxmss-evm-verifier
+```
+
+The script needs `jq`. `checksums.txt` lists the verifier's bytecode, so it has to
+be updated as well.
+
 ## Deployment
 
 System contracts are typically deployed using [Nick's method][nm] for predictable
@@ -97,5 +116,6 @@ to the network.
 [7002]: https://eips.ethereum.org/EIPS/eip-7002
 [7251]: https://eips.ethereum.org/EIPS/eip-7251
 [foundry]: https://getfoundry.sh/
+[lxev]: https://github.com/ethereum/leanxmss-evm-verifier
 [forge]: https://github.com/foundry-rs/foundry/blob/master/forge
 [nm]: https://yamenmerhi.medium.com/nicks-method-ethereum-keyless-execution-168a6659479c

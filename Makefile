@@ -43,6 +43,14 @@ build: $(GEAS)
 	$(GEAS) -a -no-nl -o bytecode/recent_root/main.hex src/recent_root/main.eas
 	$(GEAS) -a -no-nl -o bytecode/recent_root/ctor.hex src/recent_root/ctor.eas
 
+	# 8483
+	mkdir -p bytecode/pq_validator_registrations
+	$(GEAS) -a -no-nl -o bytecode/pq_validator_registrations/main.hex src/pq_validator_registrations/main.eas
+	$(GEAS) -a -no-nl -o bytecode/pq_validator_registrations/ctor.hex src/pq_validator_registrations/ctor.eas
+	mkdir -p bytecode/pq_builder_registrations
+	$(GEAS) -a -no-nl -o bytecode/pq_builder_registrations/main.hex src/pq_builder_registrations/main.eas
+	$(GEAS) -a -no-nl -o bytecode/pq_builder_registrations/ctor.hex src/pq_builder_registrations/ctor.eas
+
 	# test helper
 	mkdir -p bytecode/fake_expo_test
 	$(GEAS) -a -no-nl -o bytecode/fake_expo_test/main.hex src/common/fake_expo_test.eas
